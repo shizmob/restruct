@@ -243,5 +243,6 @@ TODO
 
 * Properly emit `AtOffset` and `Ref` types
 * Add `Maybe` and `Either` types
+* Fix `Arr` EOF-handling masking errors
 * Port more features over from `destruct`
 * More examples
