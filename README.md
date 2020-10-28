@@ -211,6 +211,8 @@ Standard types
 * `Str(length?=None, type='c', encoding='utf-8', terminator?=None, exact=False, length_unit=1, length_type=UInt(8)):` string, supported types are `raw`, `c` and `pascal`
 * `Bool(type=UInt(8), true_value=1, false_value=0):` generic boolean
 
+---
+
 * `Nothing:` parses nothing and emits nothing, returns `None`
 * `Implied(value):` parses nothing and emits nothing, returns `value`
 * `Fixed(value):` reads bytes and emits bytes, making sure they equate `value`
@@ -218,11 +220,15 @@ Standard types
 * `Data(size?=None):` parses and returns raw bytes
 * `Enum(enum, type):` parses and emits `type` and constructs `enum.Enum` subclass `enum` with its result
 
+---
+
 * `StructType(fields, cls, generics=[], union=False, partial=False, bound=[]):` type class used by `MetaStruct`
 * `Struct:` base class for automatic struct type generation through `MetaStruct` meta-class and field annotations
 * `Union:` base class for automatic union type generation through `MetaStruct` meta-class and field annotations
 * `Arr(type, count=None, size=None, stop_value=None):` parses and emits array of `types`, of optionally max `count` elements and `size` bytes total size
 * `Switch(default=None, fallback=None, options={}):` parses and emits a choice of types chosen through the `selector` field
+
+---
 
 * `AtOffset(type, point=None, reference=os.SEEK_SET):` parses and emits `type` at offset `point` in input stream
 * `Ref(value_type, offset_type, reference=os.SEEK_SET):` parses and emits `value_type` at offset `offset_type`, parsed before, in the stream
