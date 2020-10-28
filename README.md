@@ -101,7 +101,7 @@ class Derived(Base):
     d: UInt(8)
 
 # just works!
->>> parse(Derived, b'\x01\x02\x03\x4')
+>>> parse(Derived, b'\x01\x02\x03\x04')
 Derived {
   a: 1,
   b: 2,
