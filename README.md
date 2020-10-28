@@ -119,13 +119,13 @@ from restruct import parse, Struct, UInt
 class GenericTest(Struct, generics=['T']):
     # now you can use the variable T to stand in for any type and most values!
     foo: UInt(32)
-    bar: T
+    bar: Arr(T)
 
 # use [] syntax on the type to resolve the generic
->>> parse(GenericTest[UInt(8)], b'\x39\x05\x00\x00\x45')
-GenericTest[UInt(8, le)] {
+>>> parse(GenericTest[UInt(16)], b'\x39\x05\x00\x00\x45\x00\xa4\x01\x11\x22')
+GenericTest[UInt(16, le)] {
   foo: 1337,
-  bar: 69
+  bar: [69, 420, 8721]
 }
 
 # failing to resolve all generics before parsing predictably fails
