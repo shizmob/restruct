@@ -34,7 +34,7 @@ def format_value(value: Any, formatter: Callable[[Any], str], indentation: int =
             values = []
     elif isinstance(value, (list, set, frozenset)):
         l = len(value)
-        is_set = isinstance(value, (set, frozenst))
+        is_set = isinstance(value, (set, frozenset))
         if l > 3:
             fmt = '{{\n{}\n}}' if is_set else '[\n{}\n]'
             values = [indent(',\n'.join(format_value(v, formatter) for v in value), 2, True)]
@@ -881,7 +881,7 @@ class Arr(Type, G[T]):
     def __init__(self, type: T, count: O[int] = None, size: O[int] = None, stop_value: O[Any] = None) -> None:
         self.type = type
         self.count = count
-        self.size = count
+        self.size = size
         self.stop_value = stop_value
 
     def parse(self, io: IO, context: Context) -> Sequence[T]:
@@ -894,7 +894,7 @@ class Arr(Type, G[T]):
         i = 0
         start = io.tell()
         while count is None or i < count:
-            if size is not None and io.tell() - pos >= size:
+            if size is not None and io.tell() - start >= size:
                 break
             
             if isinstance(self.type, list):
