@@ -795,13 +795,13 @@ class MetaStruct(type):
         attrs = collections.OrderedDict()
         attrs.update({g: Generic() for g in generics})
         if inject:
-            attrs.update({n: globals()[n] for n in __all__})
+            attrs.update({c.__name__: c for c in __all_types__})
         return attrs
 
     def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], inject: bool = True, generics: Sequence[str] = [], **kwargs) -> Any:
         if inject:
-            for n in __all__:
-                del attrs[n]
+            for c in __all_types__:
+                del attrs[c.__name__]
         
         # Inherit some properties from base types
         gs = []
@@ -1316,9 +1316,7 @@ def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None) -> O[int
             raise
 
 
-__all__ = [c.__name__ for c in {
-    # Bases
-    IO, Context, Error, Type,
+__all_types__ = {
     # Base types
     Nothing, Implied, Fixed, Pad, Data, Enum,
     # Modifier types
@@ -1327,6 +1325,10 @@ __all__ = [c.__name__ for c in {
     StructType, MetaStruct, Struct, Union, Tuple, Arr, Switch,
     # Primitive types
     Bool, Int, UInt, Float, Str,
+}
+__all__ = [c.__name__ for c in __all_types__ | {
+    # Bases
+    IO, Context, Error, Type,
     # Functions
     parse, emit, sizeof,
 }]
