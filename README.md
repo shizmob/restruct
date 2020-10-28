@@ -114,7 +114,7 @@ Generics
 --------
 
 ```python3
-from restruct import parse, Struct
+from restruct import parse, Struct, UInt
 
 class GenericTest(Struct, generics=['T']):
     # now you can use the variable T to stand in for any type and most values!
@@ -122,7 +122,7 @@ class GenericTest(Struct, generics=['T']):
     bar: T
 
 # use [] syntax on the type to resolve the generic
->>> parse(GenericTest[restruct.UInt(8)], b'\x39\x05\x00\x00\x45')
+>>> parse(GenericTest[UInt(8)], b'\x39\x05\x00\x00\x45')
 GenericTest[UInt(8, le)] {
   foo: 1337,
   bar: 69
@@ -145,6 +145,63 @@ restruct.Error: [bar] ValueError: unresolved generic
 # also works with inheritance!
 ```
 
+Error handling
+--------------
+
+```python3
+from restruct import parse, Struct
+
+class Inner(Struct):
+    foo: Str(length=32, type='c')
+
+class Nested(Struct):
+    level: UInt(8)
+    inner: Arr(Inner, count=4)
+
+class Base(Struct):
+    version: UInt(8)
+    nested:  Nested
+
+# errors contain the full path through the structures to the error'd value
+>>> parse(Base, b'\x01\x45All\x00Good\x00So\x00\x81hmm\x00\x00')
+Traceback (most recent call last):
+  File "restruct.py", line 1225, in parse
+    return type.parse(io, context)
+  File "restruct.py", line 695, in parse
+    val = parse(type, io, context)
+  File "restruct.py", line 1225, in parse
+    return type.parse(io, context)
+  File "restruct.py", line 695, in parse
+    val = parse(type, io, context)
+  File "restruct.py", line 1225, in parse
+    return type.parse(io, context)
+  File "restruct.py", line 907, in parse
+    elem = parse(type, io, context)
+  File "restruct.py", line 1225, in parse
+    return type.parse(io, context)
+  File "restruct.py", line 695, in parse
+    val = parse(type, io, context)
+  File "restruct.py", line 1225, in parse
+    return type.parse(io, context)
+  File "restruct.py", line 1133, in parse
+    return raw.decode(encoding)
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0x81 in position 0: invalid start byte
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "restruct.py", line 1230, in parse
+    raise Error(context, e)
+restruct.Error: [nested.inner.3.foo] UnicodeDecodeError: 'utf-8' codec can't decode byte 0x81 in position 0: invalid start byte
+# access the path programmatically
+>>> e.path
+[('nested', <class '__main__.Nested'>), ('inner', <Arr(<class '__main__.Inner'>[4])>), (3, <restruct.StructType object at 0x1079b2810>), ('foo', <CStr(32)>)]
+# access the original exception
+>>> e.exception
+UnicodeDecodeError('utf-8', b'\x81', 0, 1, 'invalid start byte')
+```
+
 Standard types
 --------------
 
@@ -154,7 +211,6 @@ Standard types
 * `Str(length?=None, type='c', encoding='utf-8', terminator?=None, exact=False, length_unit=1, length_type=UInt(8)):` string, supported types are `raw`, `c` and `pascal`
 * `Bool(type=UInt(8), true_value=1, false_value=0):` generic boolean
 
-
 * `Nothing:` parses nothing and emits nothing, returns `None`
 * `Implied(value):` parses nothing and emits nothing, returns `value`
 * `Fixed(value):` reads bytes and emits bytes, making sure they equate `value`
@@ -162,13 +218,11 @@ Standard types
 * `Data(size?=None):` parses and returns raw bytes
 * `Enum(enum, type):` parses and emits `type` and constructs `enum.Enum` subclass `enum` with its result
 
-
 * `StructType(fields, cls, generics=[], union=False, partial=False, bound=[]):` type class used by `MetaStruct`
 * `Struct:` base class for automatic struct type generation through `MetaStruct` meta-class and field annotations
 * `Union:` base class for automatic union type generation through `MetaStruct` meta-class and field annotations
 * `Arr(type, count=None, size=None, stop_value=None):` parses and emits array of `types`, of optionally max `count` elements and `size` bytes total size
 * `Switch(default=None, fallback=None, options={}):` parses and emits a choice of types chosen through the `selector` field
-
 
 * `AtOffset(type, point=None, reference=os.SEEK_SET):` parses and emits `type` at offset `point` in input stream
 * `Ref(value_type, offset_type, reference=os.SEEK_SET):` parses and emits `value_type` at offset `offset_type`, parsed before, in the stream
@@ -187,7 +241,7 @@ BSD-2; see `LICENSE` for details.
 TODO
 ====
 
-* Properly emitting `AtOffset` and `Ref` types
+* Properly emit `AtOffset` and `Ref` types
 * Add `Maybe` and `Either` types
 * Port more features over from `destruct`
 * More examples
