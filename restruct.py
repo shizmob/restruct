@@ -70,8 +70,10 @@ def format_path(path: Sequence[str]) -> str:
     return s
 
 def class_name(s: Any, module_whitelist: Sequence[str] = {'__main__', 'builtins', __name__}) -> str:
-    module = s.__class__.__module__
-    name = s.__class__.__qualname__
+    if not isinstance(s, type):
+        s = s.__class__
+    module = s.__module__
+    name = s.__qualname__
     if module in module_whitelist:
         return name
     return module + '.' + name
@@ -704,7 +706,7 @@ class StructType(Type):
                     hook = 'on_' + name
                     if hasattr(c, hook):
                         getattr(c, hook)(self.fields, context)
-        except Exception as e:
+        except Exception:
             # Check EOF and allow if partial.
             b = io.read(1)
             if not self.partial or b:
@@ -824,6 +826,12 @@ class MetaStruct(type):
         new.__slots__ = cls.__slots__
         subtype.cls = new
         return new
+
+    def __repr__(cls) -> str:
+        return '<{}: {}>'.format(
+            'union' if cls.__restruct_type__.union else 'struct',
+            class_name(cls),
+        )
 
 class Struct(metaclass=MetaStruct, inject=False):
     def __init__(self, **kwargs):
