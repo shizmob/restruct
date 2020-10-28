@@ -1151,7 +1151,7 @@ class Str(Type):
             if type == 'c':
                 io.write(terminator)
         
-        if exact and length is not None:
+        if length is not None:
             if write_length > length:
                 raise ValueError('exact length specified but write length ({}) > given length ({})'.format(write_length, length))
             left = length - write_length
