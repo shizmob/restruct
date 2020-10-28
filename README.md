@@ -193,7 +193,7 @@ Traceback (most recent call last):
   File "<stdin>", line 1, in <module>
   File "restruct.py", line 1230, in parse
     raise Error(context, e)
-restruct.Error: [nested.inner.3.foo] UnicodeDecodeError: 'utf-8' codec can't decode byte 0x81 in position 0: invalid start byte
+restruct.Error: [nested.inner[3].foo] UnicodeDecodeError: 'utf-8' codec can't decode byte 0x81 in position 0: invalid start byte
 # access the path programmatically
 >>> e.path
 [('nested', <struct: Nested>), ('inner', <Arr(<struct: Inner>[4])>), (3, <restruct.StructType object at 0x1079b2810>), ('foo', <CStr(32)>)]

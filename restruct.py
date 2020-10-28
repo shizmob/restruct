@@ -133,9 +133,10 @@ class Error(Exception):
     __slots__ = ('path',)
 
     def __init__(self, context: Context, exception: Exception) -> None:
-        path = '.'.join(str(p) for p, _ in context.path) if context.path else ''
+        path = context.format_path()
         if not isinstance(exception, Exception):
             exception = ValueError(exception)
+
         super().__init__('{}{}: {}'.format(
             ('[' + path + '] ') if path else '', class_name(exception), str(exception)
         ))
