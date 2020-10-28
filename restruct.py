@@ -563,28 +563,40 @@ class Lazy(Type, G[T]):
     def __repr__(self) -> str:
         return '<{}: {!r}>'.format(class_name(self), self.child)
 
-class Processed(Type, G[T]):
-    __slots__ = ('type', 'do_parse', 'do_emit')
+class Processed(Type, G[T, T2]):
+    __slots__ = ('type', 'do_parse', 'do_emit', 'with_context')
 
-    def __init__(self, type: T, parse: Callable[[T], T2], emit: Callable[[T2], T]) -> None:
+    def __init__(self, type: T, parse: Callable[[T], T2], emit: Callable[[T2], T], with_context: bool = False) -> None:
         self.type = type
         self.do_parse = parse
         self.do_emit = emit
+        self.with_context = with_context
 
     def parse(self, io: IO, context: Context) -> T2:
         value = parse(self.type, io, context)
-        return self.do_parse(value)
+        if to_value(self.with_context, context):
+            return self.do_parse(value, context)
+        else:
+            return self.do_parse(value)
 
     def emit(self, value: T2, io: IO, context: Context) -> None:
-        emit(self.type, self.do_emit(value), io, context)
+        if to_value(self.with_context, context):
+            raw = self.do_emit(value, context)
+        else:
+            raw = self.do_emit(value)
+        emit(self.type, raw, io, context)
 
     def sizeof(self, value: O[T2], context: Context) -> O[int]:
         if value is not None:
-            value = self.do_emit(value)
-        return sizeof(self.type, value, context)
+            if to_value(self.with_context, context):
+                raw = self.do_emit(value, context)
+            else:
+                raw = self.do_emit(value)
+        return sizeof(self.type, raw, context)
 
     def __repr__(self) -> str:
-        return '<λ{!r} ->{} <-{}>'.format(
+        return '<λ{}{!r} ->{} <-{}>'.format(
+            '+' if self.with_context else '',
             self.type, self.do_parse.__name__, self.do_emit.__name__
         )
 
