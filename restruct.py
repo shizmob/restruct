@@ -875,6 +875,41 @@ class Struct(metaclass=MetaStruct, inject=False):
 class Union(Struct, metaclass=MetaStruct, union=True, inject=False):
     pass
 
+class Tuple(Type):
+    __slots__ = ('types',)
+
+    def __init__(self, types: Sequence[Type]) -> None:
+        self.types = types
+
+    def parse(self, io: IO, context: Context) -> Sequence[Any]:
+        value = []
+        for i, type in enumerate(self.types):
+            type = to_type(type, i)
+            with context.enter(i, type):
+                value.append(parse(type, io, context))
+        return tuple(value)
+
+    def emit(self, value: Sequence[Any], io: IO, context: Context) -> None:
+        for i, (type, val) in enumerate(zip(self.types, value)):
+            type = to_type(type, i)
+            with context.enter(i, type):
+                emit(type, val, io, context)
+
+    def sizeof(self, value: O[Sequence[Any]], context: Context) -> O[int]:
+        l = 0
+        if value is None:
+            value = [None] * len(self.types)
+
+        for i, (type, val) in enumerate(zip(self.types, value)):
+            type = to_type(type, i)
+            with context.enter(i, type):
+                n = sizeof(type, val, context)
+                if n is None:
+                    return None
+                l += n
+
+        return l
+
 class Arr(Type, G[T]):
     __slots__ = ('type', 'count', 'size', 'stop_value')
 
@@ -1268,7 +1303,7 @@ __all__ = [c.__name__ for c in {
     # Modifier types
     AtOffset, Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
     # Compound types
-    StructType, MetaStruct, Struct, Union, Arr, Switch,
+    StructType, MetaStruct, Struct, Union, Tuple, Arr, Switch,
     # Primitive types
     Bool, Int, UInt, Float, Str,
     # Functions
