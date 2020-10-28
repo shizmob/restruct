@@ -704,7 +704,7 @@ class StructType(Type):
                         n = nbytes
 
                     setattr(c, name, val)
-                    hook = 'on_' + name
+                    hook = 'on_parse_' + name
                     if hasattr(c, hook):
                         getattr(c, hook)(self.fields, context)
         except Exception:
@@ -734,6 +734,10 @@ class StructType(Type):
                 if self.union:
                     io.seek(pos, os.SEEK_SET)
 
+                hook = 'on_emit_' + name
+                if hasattr(value, hook):
+                    getattr(value, hook)(self.fields, context)
+
                 field = getattr(value, name)
                 emit(type, field, io, context)
 
@@ -742,10 +746,6 @@ class StructType(Type):
                     n = max(n, nbytes)
                 else:
                     n = nbytes
-
-                hook = 'on_' + name
-                if hasattr(value, hook):
-                    getattr(value, hook)(self.fields, context)
 
         for g in self.generics:
             g.pop()

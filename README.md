@@ -65,6 +65,10 @@ class Message(Struct):
     message:  Str(length=64, exact=True)
     priority: UInt(8)
 
+    def on_emit_priority(self, spec, context):
+        # called before `priority` is emitted
+        self.priority = len(self.message)
+
 class Test(Struct):
     type:     UInt(32)
     contents: Switch(options={
@@ -72,7 +76,7 @@ class Test(Struct):
         2: Message,
     })
 
-    def on_type(self, spec, context):
+    def on_parse_type(self, spec, context):
         # called when `type` field is set, spec contains the field types
         spec.contents.selector = self.type
 
