@@ -113,18 +113,17 @@ class Context:
         self.size = None
 
     @contextmanager
-    def enter(self, name, parser):
-        self.path.append((name, parser))
+    def enter(self, name: str, type) -> None:
+        self.path.append((name, type))
         yield
         self.path.pop()
 
-    @contextmanager
-    def add_ref(self, size):
+    def add_ref(self, size) -> None:
         if self.size is None:
-            self.size = sizeof(self.root, self.value)
+            self.size = sizeof(self.root, self.value, self)
         offset = self.size
-        yield offset
         self.size += size
+        return offset
 
     def format_path(self):
         return format_path(name for name, parser in self.path)
@@ -324,55 +323,129 @@ def seeking(fd, pos, whence=os.SEEK_SET):
     finally:
         fd.seek(oldpos, os.SEEK_SET)
 
-class AtOffset(Type, G[T]):
-    __slots__ = ('type', 'point', 'reference')
+class RefPoint(Type, G[T]):
+    __slots__ = ('parent', 'type', 'reference')
 
-    def __init__(self, type: T, point: O[int] = None, reference: int = os.SEEK_SET) -> None:
+    def __init__(self, parent: 'Ref', type: T, reference: U[int, str] = os.SEEK_SET) -> None:
+        self.parent = parent
         self.type = type
-        self.point = point
         self.reference = reference
 
-    def parse(self, io: IO, context: Context) -> T:
-        point = to_value(self.point, context)
+        if self.reference not in (os.SEEK_SET, os.SEEK_CUR, os.SEEK_END, 'before_point', 'after_point'):
+            raise ValueError('current reference must be any of [os.SEEK_SET, os.SEEK_CUR, os.SEEK_END, \'before_point\', \'after_point\']')
 
-        with seeking(io, point, self.reference) as f:
-            return parse(self.type, f, context)
+    def parse(self, io: IO, context: Context) -> T:
+        reference = to_value(self.reference, context)
+
+        offset = 0
+        if reference == 'before_point':
+            offset = io.tell()
+            reference = os.SEEK_SET
+        point = parse(self.type, io, context)
+        if reference == 'after_point':
+            offset = io.tell()
+            reference = os.SEEK_SET
+        self.parent.offsets.append((point + offset, reference))
+        return point
 
     def emit(self, value: T, io: IO, context: Context) -> None:
-        point = to_value(self.point, context)
+        reference = to_value(self.reference, context)
 
-        with seeking(io, point, self.reference) as f:
-            return emit(self.type, value, f, context)
+        # store location of this point to be updated by RefValue.emit() later, output old value for now
+        self.parent.points.append((io.tell(), reference))
+        emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return 0 # sizeof(self.type, value, context)
+        return sizeof(self.type, value, context)
 
-    def __repr__(self):
-        return '<~{!r}({}{})>'.format(
-            self.type, {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.reference], self.point,
+    def __repr__(self) -> str:
+        return '<&?{}{}>'.format(
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.point.reference], repr(self.point.type).strip('<>'),
         )
 
-class Ref(Type, G[T, T2]):
-    __slots__ = ('value_type', 'offset_type', 'reference')
+class RefValue(Type, G[T]):
+    __slots__ = ('parent', 'type')
 
-    def __init__(self, value_type: T, offset_type: T2, reference: int = os.SEEK_SET) -> None:
-        self.value_type = value_type
-        self.offset_type = offset_type
-        self.reference = reference
+    def __init__(self, parent: 'Ref', type: T) -> None:
+        self.parent = parent
+        self.type = type
 
     def parse(self, io: IO, context: Context) -> T:
-        offset = parse(self.offset_type, io, context)
-        return parse(AtOffset(self.value_type, offset, reference), io, context)
+        offset, reference = self.parent.offsets.pop()
+        with seeking(io, offset, reference) as f:
+            return parse(self.type, io, context)
 
     def emit(self, value: T, io: IO, context: Context) -> None:
-        raise NotImplemented
+        point_pos, reference = self.parent.points.pop()
+
+        start = io.tell()
+        emit(self.type, value, io, context)
+        size = io.tell() - start
+
+        offset = context.add_ref(size)
+        if reference == os.SEEK_CUR:
+            offset -= start
+        elif reference == 'before_point':
+            offset -= point_pos
+        elif reference == 'after_point':
+            offset -= point_pos
+            # lol fuck off variable-width point types
+            offset += sizeof(self.parent.point_type.type, offset, context)
+
+        # fill in previous offset with real value
+        with seeking(io, point_pos, os.SEEK_SET) as f:
+            emit(self.parent.point_type.type, offset, f, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return sizeof(self.value_type, value, context)
+        return 0
 
-    def __repr__(self):
-        return '<~{!r}({}{!r})>'.format(
-            self.value_type, {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.reference], self.offset_type,
+    def __repr__(self) -> str:
+        return '<&!{}>'.format(repr(self.type).strip('<>'))
+
+class Ref(Type, G[T, T2]):
+    __slots__ = ('point_type', 'value_type', 'offsets', 'points')
+
+    def __init__(self,) -> None:
+        self.point_type = None
+        self.value_type = None
+        self.offsets = []
+        self.points = []
+
+    def point(self, type: T2, reference: U[int, str] = os.SEEK_SET) -> RefPoint:
+        self.point_type = RefPoint(self, type, reference)
+        return self.point_type
+
+    def value(self, type: T) -> RefValue:
+        self.value_type = RefValue(self, type)
+        return self.value_type
+
+    def __call__(self, type: T, point_type: T2, reference: U[int, str] = os.SEEK_SET) -> Any:
+        self.point(point_type, reference)
+        self.value(type)
+        return self
+
+    def parse(self, io: IO, context: Context) -> T:
+        point = parse(self.point_type, io, context)
+        return parse(self.value_type, io, context)
+
+    def emit(self, value: T, io: IO, context: Context) -> None:
+        emit(self.point_type, 0, io, context)
+        emit(self.value_type, value, io, context)
+
+    def sizeof(self, value: O[T], context: Context) -> O[int]:
+        pl = sizeof(self.point_type, None, context)
+        if pl is None:
+            return None
+        l = sizeof(self.value_type, value, context)
+        if l is None:
+            return None
+        return pl + l
+
+    def __repr__(self) -> str:
+        return '<&{} @ {}{}>'.format(
+            repr(self.value_type.type).strip('<>'),
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.point_type.reference],
+            repr(self.point_type.type).strip('<>'),
         )
 
 class SizedFile:
@@ -791,18 +864,15 @@ class StructType(Type):
 
 class MetaStruct(type):
     @classmethod
-    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
+    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], refs: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
         attrs = collections.OrderedDict()
         attrs.update({g: Generic() for g in generics})
+        attrs.update({r: Ref() for r in refs})
         if inject:
             attrs.update({c.__name__: c for c in __all_types__})
         return attrs
 
-    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], inject: bool = True, generics: Sequence[str] = [], **kwargs) -> Any:
-        if inject:
-            for c in __all_types__:
-                del attrs[c.__name__]
-        
+    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], generics: Sequence[str] = [], refs: Sequence[str] = [], inject: bool = True, **kwargs) -> Any:
         # Inherit some properties from base types
         gs = []
         bound = []
@@ -815,9 +885,14 @@ class MetaStruct(type):
             if type.union:
                 kwargs['union'] = True
 
-        fields.update(attrs.get('__annotations__', {}))
+        for r in refs:
+            del attrs[r]
         for g in generics:
             gs.append(attrs.pop(g))
+        if inject:
+            for c in __all_types__:
+                del attrs[c.__name__]
+        fields.update(attrs.get('__annotations__', {}))
 
         attrs['__slots__'] = attrs.get('__slots__', ()) + tuple(fields)
 
@@ -1320,7 +1395,7 @@ __all_types__ = {
     # Base types
     Nothing, Implied, Fixed, Pad, Data, Enum,
     # Modifier types
-    AtOffset, Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
+    Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
     # Compound types
     StructType, MetaStruct, Struct, Union, Tuple, Arr, Switch,
     # Primitive types

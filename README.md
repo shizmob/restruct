@@ -114,6 +114,65 @@ Derived {
 }
 ```
 
+References
+----------
+
+```python3
+from restruct import parse, Struct
+
+class ReferencedStruct(Struct):
+    magic: Fixed(b'ENTRY')
+    foo:   UInt(32)
+    bar:   Str(type='c')
+
+# declare variable name, one for each reference
+class HasReference(Struct, refs={'R'}):
+    magic: Fixed(b'TARR')
+    data:  R(Arr(ReferencedStruct), UInt(32))
+
+>>> parse(HasReference, b'TARR\x10\x00\x00\x00\xDE\xAD\xBE\xEF\xDE\xAD\xC0\xDEENTRY\x2A\x00\x00\x00First entry\x00ENTRY\x45\x00\x00\x00Second entry\x00')
+HasReference {
+  magic: [54 41 52 52],
+  data: [ReferencedStruct {
+    magic: [45 4e 54 52 59],
+    foo: 42,
+    bar: 'First entry'
+  }, ReferencedStruct {
+    magic: [45 4e 54 52 59],
+    foo: 69,
+    bar: 'Second entry'
+  }]
+}
+# compressed and with correct offsets!
+>>> emit(HasReference, _).getvalue()
+b'TARR\x08\x00\x00\x00ENTRY*\x00\x00\x00First entry\x00ENTRYE\x00\x00\x00Second entry\x00'
+
+# there is some data after the offset that is needed to parse the value,
+# so we split the point and value parsers
+class TrickierReference(Struct, refs={'R'}):
+    magic:  Fixed(b'WARR')
+    offset: R.point(UInt(32))
+    count:  UInt(32)
+    data:   R.value(Arr(ReferencedStruct))
+
+    def on_parse_count(self, spec, context):
+        spec.data.type.count = self.count
+
+>>> parse(TrickierReference, b'WARR\x10\x00\x00\x00\x01\x00\x00\x00\xDE\xAD\xC0\xDEENTRY\x2A\x00\x00\x00There can only be one\x00ENTRY\x45\x00\x00\x00Second entry\x00')
+TrickierReference {
+  magic: [57 41 52 52],
+  offset: 16,
+  count: 1,
+  data: [ReferencedStruct {
+    magic: [45 4e 54 52 59],
+    foo: 42,
+    bar: 'There can only be one'
+  }]
+}
+>>> emit(TrickierReference, _).getvalue()
+b'WARR\x0c\x00\x00\x00\x01\x00\x00\x00ENTRY*\x00\x00\x00There can only be one\x00'
+```
+
 Generics
 --------
 
@@ -234,8 +293,10 @@ Standard types
 
 ---
 
-* `AtOffset(type, point=None, reference=os.SEEK_SET):` parses and emits `type` at offset `point` in input stream
-* `Ref(value_type, offset_type, reference=os.SEEK_SET):` parses and emits `value_type` at offset `offset_type`, parsed before, in the stream
+* `Ref()`: initialises a new point-value reference pair
+   - `ref.point(point_type, reference=os.SEEK_SET):` parses and emits the data containing the offset to the referred value
+   - `ref.value(value_type):` parses and emits the referred value
+   - `ref(value_type, point_type, reference=os.SEEK_SET):` parses and emits a value of `value_type` pointed to by an offset of type `point_type`
 * `WithSize(type, limit=None, exact=False):` parses and emits `type`, limiting its size in the tream to `limit` bytes
 * `AlignTo(type, alignment, value?=b'\x00'):` parses and emits `type`, aligning stream to alignment bytes **after**
 * `AlignedTo(type, alignment, value?=b'\x00'):` parse and emits `type`, aligning stream to alignment bytes **before**
@@ -251,7 +312,6 @@ BSD-2; see `LICENSE` for details.
 TODO
 ====
 
-* Properly emit `AtOffset` and `Ref` types
 * Add `Maybe` and `Either` types
 * Fix `Arr` EOF-handling masking errors
 * Port more features over from `destruct`
