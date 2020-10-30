@@ -8,7 +8,7 @@ import collections
 import itertools
 from contextlib import contextmanager
 
-from typing import Generic as G, Union, TypeVar, Any, Callable, Sequence, Mapping, Optional as O
+from typing import Generic as G, Union as U, TypeVar, Any, Callable, Sequence, Mapping, Optional as O
 
 
 ## Helpers
@@ -93,19 +93,19 @@ class IO:
     readable = False
     writable = False
 
-    def seek(self, n: int, whence: int = os.SEEK_SET):
+    def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
         raise NotImplemented
 
     def read(self, n: int) -> bytes:
         raise NotImplemented
 
-    def write(self, b: bytes):
+    def write(self, b: bytes) -> None:
         raise NotImplemented
 
 class Context:
     __slots__ = ('root', 'value', 'path', 'user', 'size')
 
-    def __init__(self, root, value=None):
+    def __init__(self, root: 'Type', value: O[Any] = None) -> None:
         self.root = root
         self.value = value
         self.path = []
@@ -125,7 +125,7 @@ class Context:
         self.size += size
         return offset
 
-    def format_path(self):
+    def format_path(self) -> str:
         return format_path(name for name, parser in self.path)
 
 class Error(Exception):
@@ -175,13 +175,13 @@ class Nothing(Type):
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return 0
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}>'.format(class_name(self))
 
 class Implied(Type):
     __slots__ = ('value',)
 
-    def __init__(self, value: Any):
+    def __init__(self, value: Any) -> None:
         self.value = value
 
     def parse(self, io: IO, context: Context) -> Any:
@@ -194,7 +194,7 @@ class Implied(Type):
         return 0
 
     def __repr__(self) -> str:
-        return '<{}({!r})>'.format(class_name(self), self.value)
+        return '<-{!r}>'.format(class_name(self), self.value)
 
 class Fixed(Type):
     __slots__ = ('pattern',)
@@ -217,7 +217,7 @@ class Fixed(Type):
         return len(self.pattern)
 
     def __repr__(self) -> str:
-        return '<{}({})>'.format(class_name(self), self.value)
+        return '<!{}>'.format(class_name(self), str(self.value)[1:])
 
 class Pad(Type):
     __slots__ = ('size', 'value',)
@@ -283,12 +283,12 @@ E_co = TypeVar('E_co', bound=enum.Enum)
 class Enum(Type, G[E_co, T]):
     __slots__ = ('type', 'cls', 'exhaustive')
 
-    def __init__(self, cls: E_co, type: T, exhaustive: bool = True):
+    def __init__(self, cls: E_co, type: T, exhaustive: bool = True) -> None:
         self.type = type
         self.cls = cls
         self.exhaustive = exhaustive
 
-    def parse(self, io: IO, context: Context) -> Union[E_co, T]:
+    def parse(self, io: IO, context: Context) -> U[E_co, T]:
         value = parse(self.type, io, context)
         try:
             return self.cls(value)
@@ -297,17 +297,17 @@ class Enum(Type, G[E_co, T]):
                 raise
             return value
 
-    def emit(self, value: Union[E_co, T], io: IO, context: Context) -> None:
+    def emit(self, value: U[E_co, T], io: IO, context: Context) -> None:
         if isinstance(value, self.cls):
             value = value.value
         return emit(self.type, value, io, context)
 
-    def sizeof(self, value: O[Union[E_co, T]], context: Context):
+    def sizeof(self, value: O[U[E_co, T]], context: Context) -> O[int]:
         if value is not None and isinstance(value, self.cls):
             value = value.value
         return sizeof(self.type, value, context)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), self.type)
 
 
@@ -315,7 +315,7 @@ class Enum(Type, G[E_co, T]):
 ## Modifier types
 
 @contextmanager
-def seeking(fd, pos, whence=os.SEEK_SET):
+def seeking(fd: IO, pos: int, whence: int = os.SEEK_SET) -> None:
     oldpos = fd.tell()
     fd.seek(pos, whence)
     try:
@@ -449,7 +449,7 @@ class Ref(Type, G[T, T2]):
         )
 
 class SizedFile:
-    def __init__(self, file: IO, limit: int, exact: bool = False):
+    def __init__(self, file: IO, limit: int, exact: bool = False) -> None:
         self._file = file
         self._pos = 0
         self._limit = limit
@@ -485,7 +485,7 @@ class SizedFile:
     def tell(self) -> int:
         return self._start + self._pos
 
-    def __getattr__(self, n):
+    def __getattr__(self, n: str) -> Any:
         return getattr(self._file, n)
 
 class WithSize(Type, G[T]):
@@ -505,7 +505,7 @@ class WithSize(Type, G[T]):
             io.seek(start + limit, os.SEEK_SET)
         return value
 
-    def emit(self, value: T, io: IO, context: Context):
+    def emit(self, value: T, io: IO, context: Context) -> None:
         start = io.tell()
         limit = to_value(self.limit, context)
         capped = SizedFile(io, limit)
@@ -525,7 +525,7 @@ class WithSize(Type, G[T]):
             return size
         return min(size, limit)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}: {!r} (limit={})>'.format(class_name(self), self.type, self.limit)
 
 class AlignTo(Type, G[T]):
@@ -552,7 +552,7 @@ class AlignTo(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return None # TODO
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}: {!r} (n={})>'.format(class_name(self), self.type, self.alignment)
 
 class AlignedTo(Type, G[T]):
@@ -579,7 +579,7 @@ class AlignedTo(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return None # TODO
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}: {!r} (n={})>'.format(class_name(self), self.child, self.alignment)
 
 class LazyEntry(G[T]):
@@ -592,16 +592,16 @@ class LazyEntry(G[T]):
         self.context = context
         self.parsed: O[T] = None
 
-    def __call__(self) -> None:
+    def __call__(self) -> Any:
         if self.parsed is None:
             with seeking(self.io, self.pos) as f:
                 self.parsed = parse(self.type, f, self.context)
         return self.parsed
 
-    def __str__(self):
+    def __str__(self) -> str:
         return '~~{}'.format(self.type)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '<{}: {!r}>'.format(class_name(self), self.type)
 
 class Lazy(Type, G[T]):
@@ -717,25 +717,25 @@ class Generic(Type):
             return None
         return sizeof(self.stack[-1], value, context)
 
-    def to_value(self):
+    def to_value(self) -> Any:
         return self.stack[-1]
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         if self.stack:
             return '<{} @ 0x{:x}: {!r}>'.format(class_name(self), id(self), self.stack[-1])
         return '<{} @ 0x{:x}: unresolved>'.format(class_name(self), id(self))
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo: Any) -> Any:
         return self
 
 class MetaSpec(collections.OrderedDict):
-    def __getattr__(self, item):
+    def __getattr__(self, item: Any) -> Any:
         try:
             return self[item]
         except KeyError:
             raise AttributeError(item)
 
-    def __setattr__(self, item, value):
+    def __setattr__(self, item: Any, value: Any) -> Any:
         if '__' in item:
             super().__setattr__(item, value)
         else:
@@ -752,7 +752,7 @@ class StructType(Type):
         self.partial = partial
         self.bound = bound or []
 
-    def __getitem__(self, ty):
+    def __getitem__(self, ty) -> Any:
         if not isinstance(ty, tuple):
             ty = (ty,)
 
@@ -922,20 +922,20 @@ class MetaStruct(type):
         )
 
 class Struct(metaclass=MetaStruct, inject=False):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__()
         for k in self:
             setattr(self, k, None)
         for k, v in kwargs.items():
             setattr(self, k ,v)
 
-    def __iter__(self):
+    def __iter__(self) -> Sequence[Any]:
         return iter(self.__slots__)
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(tuple((k, getattr(self, k)) for k in self))
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if type(self) != type(other):
             return False
         if self.__slots__ != other.__slots__:
@@ -947,7 +947,7 @@ class Struct(metaclass=MetaStruct, inject=False):
                 return False
         return True
 
-    def __fmt__(self, fieldfunc):
+    def __fmt__(self, fieldfunc: Callable[[Any], str]) -> str:
         args = []
         for k in self:
             if k.startswith('_'):
@@ -962,10 +962,10 @@ class Struct(metaclass=MetaStruct, inject=False):
         else:
             return '{} {{}}'.format(class_name(self))
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.__fmt__(str)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.__fmt__(repr)
 
 class Union(Struct, metaclass=MetaStruct, union=True, inject=False):
@@ -1110,7 +1110,7 @@ class Arr(Type, G[T]):
 class Switch(Type):
     __slots__ = ('options', 'selector', 'fallback')
 
-    def __init__(self, default: O[Any] = None, fallback: O[T] = None, options: Mapping[Any, T] = None):
+    def __init__(self, default: O[Any] = None, fallback: O[T] = None, options: Mapping[Any, T] = None) -> None:
         self.options = options or {}
         self.selector = default
         self.fallback = fallback
@@ -1177,7 +1177,7 @@ class Int(Type):
         )
 
 class UInt(Type):
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> Int:
         return Int(*args, signed=False, **kwargs)
 
 class Bool(Type, G[T]):
@@ -1342,10 +1342,10 @@ def to_type(spec: Any, ident: O[Any] = None) -> Type:
 
     raise ValueError('Could not figure out specification from argument {}.'.format(spec))
 
-def to_value(p, context):
-    if isinstance(p, Generic):
-        return p.to_value()
-    return p
+def to_value(t: Type, context: Context) -> Any:
+    if isinstance(t, Generic):
+        return t.to_value()
+    return t
 
 def parse(spec: Any, io: IO, context: O[Context] = None) -> Any:
     type = to_type(spec)
