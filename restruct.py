@@ -83,6 +83,23 @@ def friendly_name(s: Any) -> str:
         return s.__name__
     return str(s)
 
+def process_sizes(*s: Mapping[str, int], cb: Callable[[int, int], int]) -> Mapping[str, int]:
+    sizes = {}
+    for prev in prevs:
+        for k, n in prev.items():
+            p = sizes.get(k, 0)
+            if p is None or n is None:
+                sizes[k] = None
+            else:
+                sizes[k] = cb(p, n)
+    return sizes
+
+def max_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
+    return process_sizes(s, max)
+
+def merge_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
+    return process_sizes(s, lambda a, b: a + b)
+
 
 ## Bases 
 
@@ -102,28 +119,58 @@ class IO:
     def write(self, b: bytes) -> None:
         raise NotImplemented
 
-class Context:
-    __slots__ = ('root', 'value', 'path', 'user', 'size')
+class Stream:
+    __slots__ = ('name', 'offset', 'dependents', 'pos')
 
-    def __init__(self, root: 'Type', value: O[Any] = None) -> None:
+    def __init__(self, name: str, dependents: Sequence['Stream'] = None) -> None:
+        self.name = name
+        self.offset = None
+        self.dependents = dependents or []
+        self.pos = None
+
+class Context:
+    __slots__ = ('streams', 'stream_path', 'default_stream', 'root', 'value', 'path', 'user')
+
+    def __init__(self, root: 'Type', value: O[Any] = None, streams: Sequence[Stream] = None) -> None:
+        default = streams[0] if streams else Stream('default')
+        self.streams = {s.name: s for s in (streams or [default, Stream('refs', [default])])}
+        self.stream_path = []
+        self.default_stream = default
         self.root = root
         self.value = value
         self.path = []
         self.user = types.SimpleNamespace()
-        self.size = None
 
     @contextmanager
-    def enter(self, name: str, type) -> None:
+    def enter(self, name: str, type: 'Type') -> None:
         self.path.append((name, type))
         yield
         self.path.pop()
 
-    def add_ref(self, size) -> None:
-        if self.size is None:
-            self.size = sizeof(self.root, self.value, self)
-        offset = self.size
-        self.size += size
-        return offset
+    @contextmanager
+    def enter_stream(self, stream: str, io: O[IO] = None, pos: O[int] = None, reference = os.SEEK_SET) -> None:
+        stream = self.streams[stream]
+        if io:
+            if not pos:
+                if stream.offset is None:
+                    stream.offset = self.stream_offset(stream)
+                    stream.pos = stream.offset
+                pos = stream.pos
+            with seeking(io, pos, reference) as f:
+                self.stream_path.append(stream)
+                yield f
+                self.stream_path.pop()
+                stream.pos = f.tell()
+        else:
+            self.stream_path.append(stream)
+            yield io
+            self.stream_path.pop()
+
+    def stream_offset(self, stream: Stream) -> int:
+        size = 0
+        for s in stream.dependents:
+            size += self.stream_offset(s) + sizeof(self.root, self.value, self, stream=s.name)
+        return size
 
     def format_path(self) -> str:
         return format_path(name for name, parser in self.path)
@@ -217,7 +264,7 @@ class Fixed(Type):
         return len(self.pattern)
 
     def __repr__(self) -> str:
-        return '<!{}>'.format(class_name(self), str(self.value)[1:])
+        return '<!{}>'.format(str(self.pattern)[1:])
 
 class Pad(Type):
     __slots__ = ('size', 'value',)
@@ -305,7 +352,7 @@ class Enum(Type, G[E_co, T]):
     def sizeof(self, value: O[U[E_co, T]], context: Context) -> O[int]:
         if value is not None and isinstance(value, self.cls):
             value = value.value
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), self.type)
@@ -356,33 +403,33 @@ class RefPoint(Type, G[T]):
         emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def __repr__(self) -> str:
         return '<&?{}{}>'.format(
-            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.point.reference], repr(self.point.type).strip('<>'),
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.reference], repr(self.type).strip('<>'),
         )
 
 class RefValue(Type, G[T]):
-    __slots__ = ('parent', 'type')
+    __slots__ = ('parent', 'type', 'stream')
 
-    def __init__(self, parent: 'Ref', type: T) -> None:
+    def __init__(self, parent: 'Ref', type: T, stream: O[Stream] = None) -> None:
         self.parent = parent
         self.type = type
+        self.stream = stream.name if stream else 'refs'
 
     def parse(self, io: IO, context: Context) -> T:
         offset, reference = self.parent.offsets.pop()
-        with seeking(io, offset, reference) as f:
+        with context.enter_stream(self.stream, io, offset, reference) as f:
             return parse(self.type, io, context)
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         point_pos, reference = self.parent.points.pop()
 
-        start = io.tell()
-        emit(self.type, value, io, context)
-        size = io.tell() - start
+        with context.enter_stream(self.stream, io) as f:
+            offset = f.tell()
+            emit(self.type, value, f, context)
 
-        offset = context.add_ref(size)
         if reference == os.SEEK_CUR:
             offset -= start
         elif reference == 'before_point':
@@ -397,7 +444,8 @@ class RefValue(Type, G[T]):
             emit(self.parent.point_type.type, offset, f, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return 0
+        with context.enter_stream(self.stream):
+            return _sizeof(self.type, value, context)
 
     def __repr__(self) -> str:
         return '<&!{}>'.format(repr(self.type).strip('<>'))
@@ -433,13 +481,13 @@ class Ref(Type, G[T, T2]):
         emit(self.value_type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        pl = sizeof(self.point_type, None, context)
+        pl = _sizeof(self.point_type, None, context)
         if pl is None:
             return None
-        l = sizeof(self.value_type, value, context)
+        l = _sizeof(self.value_type, value, context)
         if l is None:
             return None
-        return pl + l
+        return add_sizes(pl, l)
 
     def __repr__(self) -> str:
         return '<&{} @ {}{}>'.format(
@@ -518,7 +566,7 @@ class WithSize(Type, G[T]):
         limit = to_value(self.limit, context)
         if self.exact:
             return limit
-        size = sizeof(self.child, value, context)
+        size = _sizeof(self.child, value, context)
         if size is None:
             return limit
         if limit is None:
@@ -628,7 +676,7 @@ class Lazy(Type, G[T]):
             return length
         if value is not None:
             value = value()
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def __str__(self) -> str:
         return '~{}'.format(self.child)
@@ -665,7 +713,7 @@ class Processed(Type, G[T, T2]):
                 raw = self.do_emit(value, context)
             else:
                 raw = self.do_emit(value)
-        return sizeof(self.type, raw, context)
+        return _sizeof(self.type, raw, context)
 
     def __repr__(self) -> str:
         return '<λ{}{!r} ->{} <-{}>'.format(
@@ -715,7 +763,7 @@ class Generic(Type):
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         if not self.stack:
             return None
-        return sizeof(self.stack[-1], value, context)
+        return _sizeof(self.stack[-1], value, context)
 
     def to_value(self) -> Any:
         return self.stack[-1]
@@ -838,7 +886,7 @@ class StructType(Type):
         io.seek(pos + n, os.SEEK_SET)
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
-        n = 0
+        n = {}
 
         for g, child in zip(self.generics, self.bound):
             g.resolve(child)
@@ -850,15 +898,18 @@ class StructType(Type):
                 else:
                     field = None
 
-                nbytes = sizeof(type, field, context)
+                nbytes = _sizeof(type, field, context)
                 if nbytes is None:
                     n = None
                     break
 
                 if self.union:
-                    n = max(n, nbytes)
+                    n = max_sizes(n, nbytes)
                 else:
-                    n += nbytes
+                    n = add_sizes(n, nbytes)
+
+        for g in self.generics:
+            g.pop()
 
         return n
 
@@ -992,19 +1043,16 @@ class Tuple(Type):
                 emit(type, val, io, context)
 
     def sizeof(self, value: O[Sequence[Any]], context: Context) -> O[int]:
-        l = 0
+        l = []
         if value is None:
             value = [None] * len(self.types)
 
         for i, (type, val) in enumerate(zip(self.types, value)):
             type = to_type(type, i)
             with context.enter(i, type):
-                n = sizeof(type, val, context)
-                if n is None:
-                    return None
-                l += n
+                l.append(_sizeof(type, val, context))
 
-        return l
+        return add_sizes(*l)
 
 class Arr(Type, G[T]):
     __slots__ = ('type', 'count', 'size', 'stop_value')
@@ -1082,22 +1130,22 @@ class Arr(Type, G[T]):
         if count is None:
             return None
 
-        l = 0
+        l = []
         for i in range(count):
             if isinstance(self.type, list):
                 type = to_type(self.type[i], i)
             else:
                 type = to_type(self.type, i)
-            l += sizeof(type, value[i] if value is not None else None, context)
+            l.append(_sizeof(type, value[i] if value is not None else None, context))
 
         if stop_value is not None:
             if isinstance(self.type, list):
                 type = to_type(self.type[count], count)
             else:
                 type = to_type(self.type, count)
-            l += sizeof(type, stop_value, context)
+            l.append(_sizeof(type, stop_value, context))
 
-        return l
+        return add_sizes(*l)
 
     def __repr__(self) -> str:
         return '<{}({!r}{}{}{})>'.format(
@@ -1134,7 +1182,7 @@ class Switch(Type):
         return emit(self.current, value, io, context)
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
-        return sizeof(self.current, value, context)
+        return _sizeof(self.current, value, context)
 
     def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), ', '.join(repr(k) + ': ' + repr(v) for k, v in self.options.items()))
@@ -1307,10 +1355,10 @@ class Str(Type):
             return None
 
         if type == 'pascal':
-            size_len = sizeof(self.length_type, l, context)
+            size_len = _sizeof(self.length_type, l, context)
             if size_len is None:
                 return None
-            l += size_len
+            l = add_sizes(to_size(l, context), size_len)
 
         return l
 
@@ -1347,6 +1395,12 @@ def to_value(t: Type, context: Context) -> Any:
         return t.to_value()
     return t
 
+def to_size(v: Any, context: Context) -> Mapping[str, int]:
+    if not isinstance(v, dict):
+        stream = context.stream_path[-1] if context.stream_path else context.default_stream
+        v = {stream.name: v}
+    return v
+
 def parse(spec: Any, io: IO, context: O[Context] = None) -> Any:
     type = to_type(spec)
     io = to_io(io)
@@ -1377,18 +1431,27 @@ def emit(spec: Any, value: Any, io: O[IO] = None, context: O[Context] = None) ->
         else:
             raise
 
-def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None) -> O[int]:
+def _sizeof(spec: Any, value: O[Any], context: Context) -> Mapping[str, O[int]]:
+    type = to_type(spec)
+    return to_size(type.sizeof(value, context), context)
+
+def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, stream: O[Str] = None) -> O[int]:
     type = to_type(spec)
     ctx = context or Context(type, value)
     try:
-        return type.sizeof(value, ctx)
-    except Error:
-        raise
+        sizes = _sizeof(type, value, ctx)
     except Exception as e:
-        if not context:
-            raise Error(ctx, e)
-        else:
-            raise
+        raise Error(ctx, e)
+
+    if stream:
+        return sizes.get(stream, 0)
+    else:
+        n = 0
+        for v in sizes.values():
+            if v is None:
+                return None
+            n += v
+        return n
 
 
 __all_types__ = {
