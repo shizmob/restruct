@@ -355,7 +355,7 @@ class Enum(Type, G[E_co, T]):
         return _sizeof(self.type, value, context)
 
     def __repr__(self) -> str:
-        return '<{}: {}>'.format(class_name(self), self.type)
+        return '<{}({}): {}>'.format(class_name(self), class_name(self.cls), repr(to_type(self.type)).strip('<>'))
 
 
 
@@ -407,7 +407,8 @@ class RefPoint(Type, G[T]):
 
     def __repr__(self) -> str:
         return '<&?{}{}>'.format(
-            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.reference], repr(self.type).strip('<>'),
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-', 'before_point': '+', 'after_point': '+'}[self.reference],
+            repr(to_type(self.type)).strip('<>'),
         )
 
 class RefValue(Type, G[T]):
@@ -448,7 +449,7 @@ class RefValue(Type, G[T]):
             return _sizeof(self.type, value, context)
 
     def __repr__(self) -> str:
-        return '<&!{}>'.format(repr(self.type).strip('<>'))
+        return '<&!{}>'.format(repr(to_type(self.type)).strip('<>'))
 
 class Ref(Type, G[T, T2]):
     __slots__ = ('point_type', 'value_type', 'offsets', 'points')
@@ -492,7 +493,7 @@ class Ref(Type, G[T, T2]):
     def __repr__(self) -> str:
         return '<&{} @ {}{}>'.format(
             repr(self.value_type.type).strip('<>'),
-            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.point_type.reference],
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-', 'before_point': '+', 'after_point': '+'}[self.point_type.reference],
             repr(self.point_type.type).strip('<>'),
         )
 
@@ -574,7 +575,7 @@ class WithSize(Type, G[T]):
         return min(size, limit)
 
     def __repr__(self) -> str:
-        return '<{}: {!r} (limit={})>'.format(class_name(self), self.type, self.limit)
+        return '<{}: {!r} (limit={})>'.format(class_name(self), to_type(self.type), self.limit)
 
 class AlignTo(Type, G[T]):
     __slots__ = ('type', 'alignment', 'value')
@@ -601,7 +602,7 @@ class AlignTo(Type, G[T]):
         return None # TODO
 
     def __repr__(self) -> str:
-        return '<{}: {!r} (n={})>'.format(class_name(self), self.type, self.alignment)
+        return '<{}: {!r} (n={})>'.format(class_name(self), to_type(self.type), self.alignment)
 
 class AlignedTo(Type, G[T]):
     __slots__ = ('child', 'alignment', 'value')
@@ -647,10 +648,10 @@ class LazyEntry(G[T]):
         return self.parsed
 
     def __str__(self) -> str:
-        return '~~{}'.format(self.type)
+        return '~~{}'.format(to_type(self.type))
 
     def __repr__(self) -> str:
-        return '<{}: {!r}>'.format(class_name(self), self.type)
+        return '<{}: {!r}>'.format(class_name(self), to_type(self.type))
 
 class Lazy(Type, G[T]):
     __slots__ = ('type', 'size')
@@ -679,10 +680,10 @@ class Lazy(Type, G[T]):
         return _sizeof(self.type, value, context)
 
     def __str__(self) -> str:
-        return '~{}'.format(self.child)
+        return '~{}'.format(to_type(self.type))
 
     def __repr__(self) -> str:
-        return '<{}: {!r}>'.format(class_name(self), self.child)
+        return '<{}: {!r}>'.format(class_name(self), to_type(self.type))
 
 class Processed(Type, G[T, T2]):
     __slots__ = ('type', 'do_parse', 'do_emit', 'with_context')
@@ -718,7 +719,7 @@ class Processed(Type, G[T, T2]):
     def __repr__(self) -> str:
         return '<λ{}{!r} ->{} <-{}>'.format(
             '+' if self.with_context else '',
-            self.type, self.do_parse.__name__, self.do_emit.__name__
+            to_type(self.type), self.do_parse.__name__, self.do_emit.__name__
         )
 
 class Mapped(Type, G[T]):
@@ -770,8 +771,8 @@ class Generic(Type):
 
     def __repr__(self) -> str:
         if self.stack:
-            return '<{} @ 0x{:x}: {!r}>'.format(class_name(self), id(self), self.stack[-1])
-        return '<{} @ 0x{:x}: unresolved>'.format(class_name(self), id(self))
+            return '<?{}>'.format(repr(self.stack[-1]).strip('<>'))
+        return '<?unresolved>'
 
     def __deepcopy__(self, memo: Any) -> Any:
         return self
@@ -913,6 +914,21 @@ class StructType(Type):
 
         return n
 
+    def __repr__(self) -> str:
+        type = 'Union' if self.union else 'Struct'
+        if self.fields:
+            for g, child in zip(self.generics, self.bound):
+                g.resolve(child)
+            fields = '{\n'
+            for f, v in self.fields.items():
+                fields += '  ' + f + ': ' + indent(format_value(to_type(v), repr), 2) + ',\n'
+            fields += '}'
+            for g in self.generics:
+                g.pop()
+        else:
+            fields = '{}'
+        return '<{}({}) {}>'.format(type, class_name(self.cls), fields)
+
 class MetaStruct(type):
     @classmethod
     def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], refs: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
@@ -963,6 +979,7 @@ class MetaStruct(type):
         new = type(new_name, (cls,), cls.__class__.__prepare__(new_name, (cls,)))
         new.__restruct_type__ = subtype
         new.__slots__ = cls.__slots__
+        new.__module__ = cls.__module__
         subtype.cls = new
         return new
 
@@ -1053,6 +1070,9 @@ class Tuple(Type):
                 l.append(_sizeof(type, val, context))
 
         return add_sizes(*l)
+
+    def __repr__(self) -> str:
+        return '<(' + ', '.join(repr(to_type(t)) for t in self.types) + ')>'
 
 class Arr(Type, G[T]):
     __slots__ = ('type', 'count', 'size', 'stop_value')
@@ -1149,7 +1169,7 @@ class Arr(Type, G[T]):
 
     def __repr__(self) -> str:
         return '<{}({!r}{}{}{})>'.format(
-            class_name(self), self.type,
+            class_name(self), to_type(self.type),
             ('[' + str(self.count) + ']') if self.count is not None else '',
             (', size: ' + str(self.size)) if self.size is not None else '',
             (', stop: ' + repr(self.stop_value)) if self.stop_value is not None else '',
