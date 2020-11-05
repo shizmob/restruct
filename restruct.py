@@ -20,6 +20,11 @@ def indent(s: str, count: int, start: bool = False) -> str:
         lines[i] = ' ' * count + lines[i]
     return '\n'.join(lines)
 
+def stretch(b: bytes, count: int) -> bytes:
+    b *= count // len(b)
+    b += b[:count - len(b)]
+    return b
+
 def format_value(value: Any, formatter: Callable[[Any], str], indentation: int = 0) -> str:
     """ Format containers to use the given formatter function instead of always repr(). """
     if isinstance(value, (dict, collections.Mapping)):
