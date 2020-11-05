@@ -99,6 +99,9 @@ def process_sizes(s: Mapping[str, int], cb: Callable[[int, int], int]) -> Mappin
                 sizes[k] = cb(p, n)
     return sizes
 
+def min_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
+    return process_sizes(s, min)
+
 def max_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
     return process_sizes(s, max)
 
@@ -673,7 +676,7 @@ class WithSize(Type, G[T]):
             return limit
         if limit is None:
             return size
-        return min(size, limit)
+        return min_sizes(*[size, to_size(limit, context)])
 
     def default(self, context: Context) -> T:
         return default(self.type, context)
