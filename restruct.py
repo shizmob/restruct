@@ -898,7 +898,7 @@ class StructType(Type):
         for g, child in zip(self.generics, self.bound):
             g.resolve(child)
 
-        c = self.cls()
+        c = self.cls.__new__(self.cls)
         try:
             for name, type in self.fields.items():
                 with context.enter(name, type):
@@ -996,7 +996,7 @@ class StructType(Type):
         for g, child in zip(self.generics, self.bound):
             g.resolve(child)
 
-        c = self.cls()
+        c = self.cls.__new__(self.cls)
         for name, type in self.fields.items():
             with context.enter(name, type):
                 setattr(c, name, default(type, context))
@@ -1084,8 +1084,10 @@ class MetaStruct(type):
 class Struct(metaclass=MetaStruct, inject=False):
     def __init__(self, **kwargs) -> None:
         super().__init__()
+        d = default(self)
         for k in self:
-            setattr(self, k, None)
+            if k not in kwargs:
+                setattr(self, k, getattr(d, k))
         for k, v in kwargs.items():
             setattr(self, k ,v)
 
