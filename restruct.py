@@ -274,14 +274,16 @@ class Fixed(Type):
         self.pattern = pattern
 
     def parse(self, io: IO, context: Context) -> bytes:
-        data = io.read(len(self.pattern))
-        if data != self.pattern:
+        pattern = to_value(self.pattern, context)
+        data = io.read(len(pattern))
+        if data != pattern:
             raise Error(context, 'Fixed mismatch!\n  wanted: {}\n  found:  {}'.format(
-                format_bytes(self.pattern), format_bytes(data)
+                format_bytes(pattern), format_bytes(data)
             ))
         return data
 
     def emit(self, value: bytes, io: IO, context: Context) -> None:
+        update_value(self.pattern, value, io, context)
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
@@ -327,10 +329,9 @@ class Data(Type):
         self.size = size
 
     def parse(self, io: IO, context: Context) -> bytes:
-        if self.size is None:
+        size = to_value(self.size, context)
+        if size is None:
             size = -1
-        else:
-            size = self.size
         data = io.read(size)
         if size >= 0 and len(data) != size:
             raise Error(context, 'Size mismatch!\n  wanted {} bytes\n  found  {} bytes'.format(
@@ -339,14 +340,13 @@ class Data(Type):
         return data
 
     def emit(self, value: bytes, io: IO, context: Context) -> None:
+        update_value(self.size, len(value), io, context)
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
         if value is not None:
             return len(value)
-        if self.size is not None:
-            return self.size
-        return None
+        return to_value(self.size, context)
 
     def default(self, context: Context) -> bytes:
         return b'\x00' * to_value(self.size, context)
@@ -1207,7 +1207,7 @@ class Arr(Type, G[T]):
         return value
 
     def emit(self, value: Sequence[T], io: IO, context: Context) -> None:
-        count = to_value(self.count, context)
+        update_value(self.count, len(value), io, context)
         size = to_value(self.size, context)
         stop_value = to_value(self.stop_value, context)
 
@@ -1226,6 +1226,8 @@ class Arr(Type, G[T]):
 
             with context.enter(i, type):
                 emit(type, elem, io, context)
+
+        update_value(self.size, io.tell() - start, io, context)
 
     def sizeof(self, value: O[Sequence[T]], context: Context) -> int:
         count = to_value(self.count, context)
@@ -1456,6 +1458,9 @@ class Str(Type):
             if exact and left:
                 io.write(b'\x00' * (left * length_unit))
 
+        if not exact:
+            update_value(self.length, write_length, io, context)
+
     def sizeof(self, value: O[str], context: Context) -> O[int]:
         length = to_value(self.length, context)
         length_unit = to_value(self.length_unit, context)
@@ -1516,6 +1521,9 @@ def to_value(t: Type, context: Context) -> Any:
     if isinstance(t, Generic):
         return t.to_value()
     return t
+
+def update_value(t: Type, value: Any, io: IO, context: Context) -> None:
+    pass
 
 def to_size(v: Any, context: Context) -> Mapping[str, int]:
     if not isinstance(v, dict):
