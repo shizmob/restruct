@@ -108,6 +108,15 @@ def max_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
 def add_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
     return process_sizes(s, lambda a, b: a + b)
 
+@contextmanager
+def seeking(fd: 'IO', pos: int, whence: int = os.SEEK_SET) -> None:
+    oldpos = fd.tell()
+    fd.seek(pos, whence)
+    try:
+        yield fd
+    finally:
+        fd.seek(oldpos, os.SEEK_SET)
+
 
 ## Bases 
 
@@ -407,15 +416,6 @@ class Enum(Type, G[E_co, T]):
 
 
 ## Modifier types
-
-@contextmanager
-def seeking(fd: IO, pos: int, whence: int = os.SEEK_SET) -> None:
-    oldpos = fd.tell()
-    fd.seek(pos, whence)
-    try:
-        yield fd
-    finally:
-        fd.seek(oldpos, os.SEEK_SET)
 
 class PartialAttr(Type, G[T]):
     __slots__ = ('name', 'type', 'values')
