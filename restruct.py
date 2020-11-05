@@ -1519,11 +1519,11 @@ class Str(Type):
 
         raw = value.encode(encoding)
 
-        write_length = (len(value) + len(terminator)) // length_unit
+        write_length = (len(value) + (len(terminator) if type == 'c' else 0)) // length_unit
         if type == 'pascal':
             emit(self.length_type, write_length, io, context)
             io.write(raw)
-        elif type in ('c', 'pascal'):
+        elif type in ('c', 'raw'):
             io.write(raw)
             if type == 'c':
                 io.write(terminator)
