@@ -308,11 +308,11 @@ class Fixed(Type):
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
-        pattern = peek_value(self.pattern, context)
+        pattern = peek_value(self.pattern, context) or b''
         return len(pattern)
 
     def default(self, context: Context) -> bytes:
-        return peek_value(self.pattern, context)
+        return peek_value(self.pattern, context) or b''
 
     def __repr__(self) -> str:
         return '<!{}>'.format(str(self.pattern)[1:])
@@ -334,7 +334,7 @@ class Pad(Type):
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return peek_value(self.size, context)
 
-    def default(self, context: Context) -> bytes:
+    def default(self, context: Context) -> None:
         return None
 
     def __repr__(self) -> str:
@@ -370,7 +370,7 @@ class Data(Type):
         return peek_value(self.size, context)
 
     def default(self, context: Context) -> bytes:
-        return b'\x00' * peek_value(self.size, context)
+        return b'\x00' * (peek_value(self.size, context) or 0)
 
     def __repr__(self) -> str:
         return '<{}{}>'.format(
@@ -534,8 +534,7 @@ class Ref(Type, G[T]):
             return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
-        with context.enter_stream(self.stream):
-            return default(self.type, context)
+        return default(self.type, context)
 
     def __repr__(self) -> str:
         return '<&{} @ {}{!r}{})>'.format(
@@ -1348,6 +1347,8 @@ class Int(Type):
 
     def sizeof(self, value: O[int], context: Context) -> int:
         bits = peek_value(self.bits, context)
+        if bits is None:
+            return None
         return bits // 8
 
     def default(self, context: Context) -> int:
@@ -1392,7 +1393,9 @@ class Float(Type):
 
     def sizeof(self, value: O[int], context: Context) -> int:
         bits = peek_value(self.bits, context)
-        return peek_value(bits, context) // 8
+        if bits is None:
+            return None
+        return bits // 8
 
     def default(self, context: Context) -> float:
         return 0.0
