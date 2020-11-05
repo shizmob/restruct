@@ -83,9 +83,9 @@ def friendly_name(s: Any) -> str:
         return s.__name__
     return str(s)
 
-def process_sizes(*s: Mapping[str, int], cb: Callable[[int, int], int]) -> Mapping[str, int]:
+def process_sizes(s: Mapping[str, int], cb: Callable[[int, int], int]) -> Mapping[str, int]:
     sizes = {}
-    for prev in prevs:
+    for prev in s:
         for k, n in prev.items():
             p = sizes.get(k, 0)
             if p is None or n is None:
@@ -97,7 +97,7 @@ def process_sizes(*s: Mapping[str, int], cb: Callable[[int, int], int]) -> Mappi
 def max_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
     return process_sizes(s, max)
 
-def merge_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
+def add_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
     return process_sizes(s, lambda a, b: a + b)
 
 
@@ -128,18 +128,33 @@ class Stream:
         self.dependents = dependents or []
         self.pos = None
 
-class Context:
-    __slots__ = ('streams', 'stream_path', 'default_stream', 'root', 'value', 'path', 'user')
+    def reset(self):
+        self.offset = self.pos = None
 
-    def __init__(self, root: 'Type', value: O[Any] = None, streams: Sequence[Stream] = None) -> None:
+class Params:
+    __slots__ = ('streams', 'default_stream', 'user')
+
+    def __init__(self, streams: Sequence[Stream] = None):
         default = streams[0] if streams else Stream('default')
         self.streams = {s.name: s for s in (streams or [default, Stream('refs', [default])])}
-        self.stream_path = []
         self.default_stream = default
+        self.user = types.SimpleNamespace()
+
+    def reset(self):
+        for s in self.streams.values():
+            s.reset()
+
+class Context:
+    __slots__ = ('stream_path', 'params', 'root', 'value', 'path', 'user')
+
+    def __init__(self, root: 'Type', value: O[Any] = None, params: O[Params] = None) -> None:
+        self.stream_path = []
         self.root = root
         self.value = value
         self.path = []
         self.user = types.SimpleNamespace()
+        self.params = params or Params()
+        self.params.reset()
 
     @contextmanager
     def enter(self, name: str, type: 'Type') -> None:
@@ -149,7 +164,7 @@ class Context:
 
     @contextmanager
     def enter_stream(self, stream: str, io: O[IO] = None, pos: O[int] = None, reference = os.SEEK_SET) -> None:
-        stream = self.streams[stream]
+        stream = self.params.streams[stream]
         if io:
             if not pos:
                 if stream.offset is None:
@@ -1417,14 +1432,14 @@ def to_value(t: Type, context: Context) -> Any:
 
 def to_size(v: Any, context: Context) -> Mapping[str, int]:
     if not isinstance(v, dict):
-        stream = context.stream_path[-1] if context.stream_path else context.default_stream
+        stream = context.stream_path[-1] if context.stream_path else context.params.default_stream
         v = {stream.name: v}
     return v
 
-def parse(spec: Any, io: IO, context: O[Context] = None) -> Any:
+def parse(spec: Any, io: IO, context: O[Context] = None, params: O[Params] = None) -> Any:
     type = to_type(spec)
     io = to_io(io)
-    context = context or Context(type)
+    context = context or Context(type, params=params)
     at_start = not context.path
     try:
         return type.parse(io, context)
@@ -1436,10 +1451,10 @@ def parse(spec: Any, io: IO, context: O[Context] = None) -> Any:
         else:
             raise
 
-def emit(spec: Any, value: Any, io: O[IO] = None, context: O[Context] = None) -> None:
+def emit(spec: Any, value: Any, io: O[IO] = None, context: O[Context] = None, params: O[Params] = None) -> None:
     type = to_type(spec)
     io = to_io(io)
-    ctx = context or Context(type, value)
+    ctx = context or Context(type, value, params=params)
     try:
         type.emit(value, io, ctx)
         return io
@@ -1455,9 +1470,9 @@ def _sizeof(spec: Any, value: O[Any], context: Context) -> Mapping[str, O[int]]:
     type = to_type(spec)
     return to_size(type.sizeof(value, context), context)
 
-def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, stream: O[Str] = None) -> O[int]:
+def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, params: O[Params] = None, stream: O[Str] = None) -> O[int]:
     type = to_type(spec)
-    ctx = context or Context(type, value)
+    ctx = context or Context(type, value, params=params)
     try:
         sizes = _sizeof(type, value, ctx)
     except Exception as e:
@@ -1486,7 +1501,7 @@ __all_types__ = {
 }
 __all__ = [c.__name__ for c in __all_types__ | {
     # Bases
-    IO, Context, Error, Type,
+    IO, Context, Params, Error, Type,
     # Functions
     parse, emit, sizeof,
 }]
