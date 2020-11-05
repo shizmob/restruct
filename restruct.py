@@ -192,8 +192,11 @@ class Context:
     def stream_offset(self, stream: Stream) -> int:
         size = 0
         for s in stream.dependents:
-            size += self.stream_offset(s) + sizeof(self.root, self.value, self, stream=s.name)
+            size += self.stream_offset(s) + self.stream_size(s)
         return size
+
+    def stream_size(self, stream: Stream) -> O[int]:
+        return sizeof(self.root, self.value, self, stream=stream.name)
 
     def format_path(self) -> str:
         return format_path(name for name, parser in self.path)
@@ -471,137 +474,73 @@ class Partial:
             setattr(type, n, v)
         return type
 
-class RefPoint(Type, G[T]):
-    __slots__ = ('parent', 'type', 'reference')
+class Ref(Type, G[T]):
+    __slots__ = ('type', 'point', 'reference', 'adjustment', 'stream')
 
-    def __init__(self, parent: 'Ref', type: T, reference: U[int, str] = os.SEEK_SET) -> None:
-        self.parent = parent
+    def __init__(self, type: Type, point: O[U[Type, int]] = None, reference: int = os.SEEK_SET, adjustment: U[int, Stream] = 0, stream: O[Stream] = None) -> None:
         self.type = type
+        self.point = point
         self.reference = reference
-
-        if self.reference not in (os.SEEK_SET, os.SEEK_CUR, os.SEEK_END, 'before_point', 'after_point'):
-            raise ValueError('current reference must be any of [os.SEEK_SET, os.SEEK_CUR, os.SEEK_END, \'before_point\', \'after_point\']')
-
-    def parse(self, io: IO, context: Context) -> T:
-        reference = to_value(self.reference, context)
-
-        offset = 0
-        if reference == 'before_point':
-            offset = io.tell()
-            reference = os.SEEK_SET
-        point = parse(self.type, io, context)
-        if reference == 'after_point':
-            offset = io.tell()
-            reference = os.SEEK_SET
-        self.parent.offsets.append((point + offset, reference))
-        return point
-
-    def emit(self, value: T, io: IO, context: Context) -> None:
-        reference = to_value(self.reference, context)
-
-        # store location of this point to be updated by RefValue.emit() later, output old value for now
-        self.parent.points.append((io.tell(), reference))
-        emit(self.type, value, io, context)
-
-    def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return _sizeof(self.type, value, context)
-
-    def default(self, context: Context) -> T:
-        return default(self.type, context)
-
-    def __repr__(self) -> str:
-        return '<&?{}{}>'.format(
-            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-', 'before_point': '+', 'after_point': '+'}[self.reference],
-            repr(to_type(self.type)).strip('<>'),
-        )
-
-class RefValue(Type, G[T]):
-    __slots__ = ('parent', 'type', 'stream')
-
-    def __init__(self, parent: 'Ref', type: T, stream: O[Stream] = None) -> None:
-        self.parent = parent
-        self.type = type
+        self.adjustment = adjustment
         self.stream = stream.name if stream else 'refs'
 
+        if self.reference not in (os.SEEK_SET, os.SEEK_CUR, os.SEEK_END):
+            raise ValueError('current reference must be any of [os.SEEK_SET, os.SEEK_CUR, os.SEEK_END]')
+
     def parse(self, io: IO, context: Context) -> T:
-        offset, reference = self.parent.offsets.pop()
-        with context.enter_stream(self.stream, io, offset, reference) as f:
-            return parse(self.type, io, context)
+        reference = get_value(self.reference, context)
+        adjustment = get_value(self.adjustment, context)
+        if isinstance(adjustment, Stream):
+            start = context.stream_offset(adjustment)
+            if reference == os.SEEK_SET:
+                adjustment = start
+            elif reference == os.SEEK_CUR:
+                adjustment = adjustment.pos
+            elif reference == os.SEEK_END:
+                adjustment = start + context.stream_size(adjustment)
+            reference = os.SEEK_SET
+        point = get_value(self.point, context) + adjustment
+        with context.enter_stream(self.stream, io, point, reference) as f:
+            return parse(self.type, f, context)
 
     def emit(self, value: T, io: IO, context: Context) -> None:
-        point_pos, reference = self.parent.points.pop()
+        reference = get_value(self.reference, context)
+        adjustment = get_value(self.adjustment, context)
+        if isinstance(adjustment, Stream):
+            start = context.stream_offset(adjustment)
+            if reference == os.SEEK_SET:
+                adjustment = start
+            elif reference == os.SEEK_CUR:
+                adjustment = adjustment.pos
+            elif reference == os.SEEK_END:
+                adjustment = start + context.stream_size(adjustment)
+            reference = os.SEEK_SET
 
         with context.enter_stream(self.stream, io) as f:
-            offset = f.tell()
+            point = f.tell()
             emit(self.type, value, f, context)
 
         if reference == os.SEEK_CUR:
-            offset -= start
-        elif reference == 'before_point':
-            offset -= point_pos
-        elif reference == 'after_point':
-            offset -= point_pos
-            # lol fuck off variable-width point types
-            offset += sizeof(self.parent.point_type.type, offset, context)
+            point -= io.tell()
+        elif reference == os.SEEK_END:
+            with seeking(io, 0, SEEK_END) as f:
+                point -= f.tell()
 
-        # fill in previous offset with real value
-        with seeking(io, point_pos, os.SEEK_SET) as f:
-            emit(self.parent.point_type.type, offset, f, context)
+        set_value(self.point, point - adjustment, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         with context.enter_stream(self.stream):
             return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
-        return default(self.type, context)
+        with context.enter_stream(self.stream):
+            return default(self.type, context)
 
     def __repr__(self) -> str:
-        return '<&!{}>'.format(repr(to_type(self.type)).strip('<>'))
-
-class Ref(Type, G[T, T2]):
-    __slots__ = ('point_type', 'value_type', 'offsets', 'points')
-
-    def __init__(self,) -> None:
-        self.point_type = None
-        self.value_type = None
-        self.offsets = []
-        self.points = []
-
-    def point(self, type: T2, reference: U[int, str] = os.SEEK_SET) -> RefPoint:
-        self.point_type = RefPoint(self, type, reference)
-        return self.point_type
-
-    def value(self, type: T) -> RefValue:
-        self.value_type = RefValue(self, type)
-        return self.value_type
-
-    def __call__(self, type: T, point_type: T2, reference: U[int, str] = os.SEEK_SET) -> Any:
-        self.point(point_type, reference)
-        self.value(type)
-        return self
-
-    def parse(self, io: IO, context: Context) -> T:
-        point = parse(self.point_type, io, context)
-        return parse(self.value_type, io, context)
-
-    def emit(self, value: T, io: IO, context: Context) -> None:
-        emit(self.point_type, 0, io, context)
-        emit(self.value_type, value, io, context)
-
-    def sizeof(self, value: O[T], context: Context) -> O[int]:
-        pl = _sizeof(self.point_type, None, context)
-        if pl is None:
-            return None
-        l = _sizeof(self.value_type, value, context)
-        if l is None:
-            return None
-        return add_sizes(pl, l)
-
-    def __repr__(self) -> str:
-        return '<&{} @ {}{}>'.format(
-            repr(self.value_type.type).strip('<>'),
-            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-', 'before_point': '+', 'after_point': '+'}[self.point_type.reference],
-            repr(self.point_type.type).strip('<>'),
+        return '<&{} @ {}{!r}{})>'.format(
+            repr(to_type(self.type)).strip('<>'),
+            {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-'}[self.reference],
+            self.point, ('[' + repr(self.adjustment) + ']' if self.adjustment else ''),
         )
 
 class SizedFile:

@@ -114,6 +114,10 @@ Derived {
 }
 ```
 
+Partials
+--------
+TODO
+
 References
 ----------
 
@@ -126,13 +130,15 @@ class ReferencedStruct(Struct):
     bar:   Str(type='c')
 
 # declare variable name, one for each reference
-class HasReference(Struct, refs={'R'}):
-    magic: Fixed(b'TARR')
-    data:  R(Arr(ReferencedStruct), UInt(32))
+class HasReference(Struct, partials={'P'}):
+    magic:  Fixed(b'TARR')
+    offset: P.point(UInt(32))
+    data:   P(Ref(Arr(ReferencedStruct)))
 
 >>> parse(HasReference, b'TARR\x10\x00\x00\x00\xDE\xAD\xBE\xEF\xDE\xAD\xC0\xDEENTRY\x2A\x00\x00\x00First entry\x00ENTRY\x45\x00\x00\x00Second entry\x00')
 HasReference {
   magic: [54 41 52 52],
+  offset: 16,
   data: [ReferencedStruct {
     magic: [45 4e 54 52 59],
     foo: 42,
@@ -147,18 +153,14 @@ HasReference {
 >>> emit(HasReference, _).getvalue()
 b'TARR\x08\x00\x00\x00ENTRY*\x00\x00\x00First entry\x00ENTRYE\x00\x00\x00Second entry\x00'
 
-# there is some data after the offset that is needed to parse the value,
-# so we split the point and value parsers
-class TrickierReference(Struct, refs={'R'}):
+# use two partials: one for the reference, one for the array count
+class TrickierReference(Struct, partials={'R', 'A'}):
     magic:  Fixed(b'WARR')
     offset: R.point(UInt(32))
-    count:  UInt(32)
-    data:   R.value(Arr(ReferencedStruct))
+    count:  A.count(UInt(32))
+    data:   R(Ref(A(Arr(ReferencedStruct))))
 
-    def on_parse_count(self, spec, context):
-        spec.data.type.count = self.count
-
->>> parse(TrickierReference, b'WARR\x10\x00\x00\x00\x01\x00\x00\x00\xDE\xAD\xC0\xDEENTRY\x2A\x00\x00\x00There can only be one\x00ENTRY\x45\x00\x00\x00Second entry\x00')
+>>> parse(TrickierReference, b'WARR\x10\x00\x00\x00\x01\x00\x00\x00\xDE\xAD\xC0\xDEENTRY\x2A\x00\x00\x00There can only be one\x00ENTRY\x45\x00\x00\x00Second nonsense entry\x00')
 TrickierReference {
   magic: [57 41 52 52],
   offset: 16,
@@ -172,6 +174,8 @@ TrickierReference {
 >>> emit(TrickierReference, _).getvalue()
 b'WARR\x0c\x00\x00\x00\x01\x00\x00\x00ENTRY*\x00\x00\x00There can only be one\x00'
 ```
+
+TODO: discuss streams
 
 Generics
 --------
