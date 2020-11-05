@@ -261,7 +261,7 @@ class Implied(Type):
         self.value = value
 
     def parse(self, io: IO, context: Context) -> Any:
-        return to_value(self.value, context)
+        return get_value(self.value, context)
 
     def emit(self, value: Any, io: IO, context: Context) -> None:
         pass
@@ -270,7 +270,7 @@ class Implied(Type):
         return 0
 
     def default(self, context: Context) -> Any:
-        return to_value(self.value, context)
+        return peek_value(self.value, context)
 
     def __repr__(self) -> str:
         return '<-{!r}>'.format(class_name(self), self.value)
@@ -282,7 +282,7 @@ class Fixed(Type):
         self.pattern = pattern
 
     def parse(self, io: IO, context: Context) -> bytes:
-        pattern = to_value(self.pattern, context)
+        pattern = get_value(self.pattern, context)
         data = io.read(len(pattern))
         if data != pattern:
             raise Error(context, 'Fixed mismatch!\n  wanted: {}\n  found:  {}'.format(
@@ -291,15 +291,15 @@ class Fixed(Type):
         return data
 
     def emit(self, value: bytes, io: IO, context: Context) -> None:
-        update_value(self.pattern, value, io, context)
+        set_value(self.pattern, value, io, context)
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
-        pattern = to_value(self.pattern, context)
+        pattern = peek_value(self.pattern, context)
         return len(pattern)
 
     def default(self, context: Context) -> bytes:
-        return to_value(self.pattern, context)
+        return peek_value(self.pattern, context)
 
     def __repr__(self) -> str:
         return '<!{}>'.format(str(self.pattern)[1:])
@@ -312,14 +312,14 @@ class Pad(Type):
         self.value = value
 
     def parse(self, io: IO, context: Context) -> None:
-        io.read(self.size)
+        io.read(get_value(self.size, context))
 
     def emit(self, value: None, io: IO, context: Context) -> None:
-        value = stretch(to_value(self.value, context), to_value(self.size, context))
+        value = stretch(get_value(self.value, context), get_value(self.size, context))
         io.write(value)
 
     def sizeof(self, value: O[None], context: Context) -> O[int]:
-        return to_value(self.size, context)
+        return peek_value(self.size, context)
 
     def default(self, context: Context) -> bytes:
         return None
@@ -337,7 +337,7 @@ class Data(Type):
         self.size = size
 
     def parse(self, io: IO, context: Context) -> bytes:
-        size = to_value(self.size, context)
+        size = get_value(self.size, context)
         if size is None:
             size = -1
         data = io.read(size)
@@ -348,16 +348,16 @@ class Data(Type):
         return data
 
     def emit(self, value: bytes, io: IO, context: Context) -> None:
-        update_value(self.size, len(value), io, context)
+        set_value(self.size, len(value), io, context)
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
         if value is not None:
             return len(value)
-        return to_value(self.size, context)
+        return peek_value(self.size, context)
 
     def default(self, context: Context) -> bytes:
-        return b'\x00' * to_value(self.size, context)
+        return b'\x00' * peek_value(self.size, context)
 
     def __repr__(self) -> str:
         return '<{}{}>'.format(
@@ -433,16 +433,19 @@ class PartialAttr(Type, G[T]):
         emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
         return default(self.type, context)
 
-    def to_value(self, context: Context) -> T:
+    def get_value(self, context: Context) -> T:
         _, value = self.values.pop()
         return value
 
-    def update_value(self, value: T, io: IO, context: Context) -> None:
+    def peek_value(self, context: Context) -> T:
+        return None
+
+    def set_value(self, value: T, io: IO, context: Context) -> None:
         offset, _ = self.values.pop()
         with seeking(io, offset, os.SEEK_SET) as f:
             emit(self.type, value, f, context)
@@ -651,7 +654,7 @@ class WithSize(Type, G[T]):
 
     def parse(self, io: IO, context: Context) -> T:
         start = io.tell()
-        limit = to_value(self.limit, context)
+        limit = get_value(self.limit, context)
         capped = SizedFile(io, limit)
         value = parse(self.type, capped, context)
         if self.exact:
@@ -660,18 +663,23 @@ class WithSize(Type, G[T]):
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         start = io.tell()
-        limit = to_value(self.limit, context)
-        capped = SizedFile(io, limit)
+        if self.exact:
+            limit = get_value(self.limit, context)
+            capped = SizedFile(io, limit)
+        else:
+            capped = io
         ret = emit(self.type, value, capped, context)
         if self.exact:
-            output.seek(start + limit, os.SEEK_SET)
+            io.seek(start + limit, os.SEEK_SET)
+        else:
+            set_value(self.limit, io.tell() - start, io, context)
         return ret
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        limit = to_value(self.limit, context)
+        limit = peek_value(self.limit, context)
         if self.exact:
             return limit
-        size = _sizeof(self.child, value, context)
+        size = _sizeof(self.type, value, context)
         if size is None:
             return limit
         if limit is None:
@@ -785,7 +793,7 @@ class Lazy(Type, G[T]):
         emit(self.type, value(), io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        length = to_value(self.length, context)
+        length = peek_value(self.length, context)
         if length is not None:
             return length
         if value is not None:
@@ -812,13 +820,13 @@ class Processed(Type, G[T, T2]):
 
     def parse(self, io: IO, context: Context) -> T2:
         value = parse(self.type, io, context)
-        if to_value(self.with_context, context):
+        if get_value(self.with_context, context):
             return self.do_parse(value, context)
         else:
             return self.do_parse(value)
 
     def emit(self, value: T2, io: IO, context: Context) -> None:
-        if to_value(self.with_context, context):
+        if get_value(self.with_context, context):
             raw = self.do_emit(value, context)
         else:
             raw = self.do_emit(value)
@@ -826,7 +834,7 @@ class Processed(Type, G[T, T2]):
 
     def sizeof(self, value: O[T2], context: Context) -> O[int]:
         if value is not None:
-            if to_value(self.with_context, context):
+            if peek_value(self.with_context, context):
                 raw = self.do_emit(value, context)
             else:
                 raw = self.do_emit(value)
@@ -834,7 +842,7 @@ class Processed(Type, G[T, T2]):
 
     def default(self, context: Context) -> T:
         value = default(self.type, context)
-        if to_value(self.with_context, context):
+        if peek_value(self.with_context, context):
             return self.do_parse(value, context)
         else:
             return self.do_parse(value)
@@ -894,7 +902,10 @@ class Generic(Type):
             raise Error(context, 'unresolved generic')
         return default(self.stack[-1], context)
 
-    def to_value(self, context: Context) -> Any:
+    def get_value(self, context: Context) -> Any:
+        return self.stack[-1]
+
+    def peek_value(self, context: Context) -> Any:
         return self.stack[-1]
 
     def __repr__(self) -> str:
@@ -1236,9 +1247,9 @@ class Arr(Type, G[T]):
     def parse(self, io: IO, context: Context) -> Sequence[T]:
         value = []
 
-        count = to_value(self.count, context)
-        size = to_value(self.size, context)
-        stop_value = to_value(self.stop_value, context)
+        count = get_value(self.count, context)
+        size = get_value(self.size, context)
+        stop_value = get_value(self.stop_value, context)
 
         i = 0
         start = io.tell()
@@ -1270,9 +1281,9 @@ class Arr(Type, G[T]):
         return value
 
     def emit(self, value: Sequence[T], io: IO, context: Context) -> None:
-        update_value(self.count, len(value), io, context)
-        size = to_value(self.size, context)
-        stop_value = to_value(self.stop_value, context)
+        set_value(self.count, len(value), io, context)
+        size = get_value(self.size, context)
+        stop_value = get_value(self.stop_value, context)
 
         if stop_value is not None:
             value = value + [stop_value]
@@ -1290,12 +1301,15 @@ class Arr(Type, G[T]):
             with context.enter(i, type):
                 emit(type, elem, io, context)
 
-        update_value(self.size, io.tell() - start, io, context)
+        set_value(self.size, io.tell() - start, io, context)
 
     def sizeof(self, value: O[Sequence[T]], context: Context) -> int:
-        count = to_value(self.count, context)
-        size = to_value(self.size, context)
-        stop_value = to_value(self.stop_value, context)
+        if value is None:
+            count = peek_value(self.count, context)
+        else:
+            count = len(value)
+        size = peek_value(self.size, context)
+        stop_value = peek_value(self.stop_value, context)
 
         if size is not None:
             return size
@@ -1377,23 +1391,23 @@ class Int(Type):
         self.order = order
     
     def parse(self, io: IO, context: Context) -> int:
-        bits = to_value(self.bits, context)
-        order = to_value(self.order, context)
-        signed = to_value(self.signed, context)
+        bits = get_value(self.bits, context)
+        order = get_value(self.order, context)
+        signed = get_value(self.signed, context)
         bs = io.read(bits // 8)
         if len(bs) != bits // 8:
             raise ValueError('short read')
         return int.from_bytes(bs, byteorder='little' if order == 'le' else 'big', signed=signed)
 
     def emit(self, value: int, io: IO, context: Context) -> None:
-        bits = to_value(self.bits, context)
-        order = to_value(self.order, context)
-        signed = to_value(self.signed, context)
+        bits = get_value(self.bits, context)
+        order = get_value(self.order, context)
+        signed = get_value(self.signed, context)
         bs = value.to_bytes(bits // 8, byteorder='little' if order == 'le' else 'big', signed=signed)
         io.write(bs)
 
     def sizeof(self, value: O[int], context: Context) -> int:
-        bits = to_value(self.bits, context)
+        bits = peek_value(self.bits, context)
         return bits // 8
 
     def default(self, context: Context) -> int:
@@ -1427,18 +1441,18 @@ class Float(Type):
             raise ValueError('unsupported bit count for float: {}'.format(bits))
 
     def parse(self, io: IO, context: Context) -> float:
-        bits = to_value(self.bits, context)
+        bits = get_value(self.bits, context)
         bs = io.read(bits // 8)
         return struct.unpack(self.FORMAT[bits], bs)[0]
 
     def emit(self, value: float, io: IO, context: Context) -> None:
-        bits = to_value(self.bits, context)
+        bits = get_value(self.bits, context)
         bs = struct.pack(self.FORMAT[bits], value)
         io.write(bs)
 
     def sizeof(self, value: O[int], context: Context) -> int:
-        bits = to_value(self.bits, context)
-        return to_value(bits, context) // 8
+        bits = peek_value(self.bits, context)
+        return peek_value(bits, context) // 8
 
     def default(self, context: Context) -> float:
         return 0.0
@@ -1462,12 +1476,12 @@ class Str(Type):
             raise ValueError('string type must be any of [raw, c, pascal]')
 
     def parse(self, io: IO, context: Context) -> str:
-        length = to_value(self.length, context)
-        length_unit = to_value(self.length_unit, context)
-        type = to_value(self.type, context)
-        exact = to_value(self.exact, context)
-        encoding = to_value(self.encoding,  context)
-        terminator = to_value(self.terminator, context)
+        length = get_value(self.length, context)
+        length_unit = get_value(self.length_unit, context)
+        type = get_value(self.type, context)
+        exact = get_value(self.exact, context)
+        encoding = get_value(self.encoding,  context)
+        terminator = get_value(self.terminator, context)
 
         if type == 'pascal':
             read_length = parse(self.length_type, io, context)
@@ -1496,12 +1510,12 @@ class Str(Type):
         return raw.decode(encoding)
 
     def emit(self, value: str, io: IO, context: Context) -> None:
-        length = to_value(self.length, context)
-        length_unit = to_value(self.length_unit, context)
-        type = to_value(self.type, context)
-        exact = to_value(self.exact, context)
-        encoding = to_value(self.encoding,  context)
-        terminator = to_value(self.terminator, context)
+        length = get_value(self.length, context)
+        length_unit = get_value(self.length_unit, context)
+        type = get_value(self.type, context)
+        exact = get_value(self.exact, context)
+        encoding = get_value(self.encoding,  context)
+        terminator = get_value(self.terminator, context)
 
         raw = value.encode(encoding)
 
@@ -1522,15 +1536,15 @@ class Str(Type):
                 io.write(b'\x00' * (left * length_unit))
 
         if not exact:
-            update_value(self.length, write_length, io, context)
+            set_value(self.length, write_length, io, context)
 
     def sizeof(self, value: O[str], context: Context) -> O[int]:
-        length = to_value(self.length, context)
-        length_unit = to_value(self.length_unit, context)
-        type = to_value(self.type, context)
-        exact = to_value(self.exact, context)
-        encoding = to_value(self.encoding,  context)
-        terminator = to_value(self.terminator, context)
+        length = peek_value(self.length, context)
+        length_unit = peek_value(self.length_unit, context)
+        type = peek_value(self.type, context)
+        exact = peek_value(self.exact, context)
+        encoding = peek_value(self.encoding,  context)
+        terminator = peek_value(self.terminator, context)
 
         if exact and length is not None:
             l = length * length_unit
@@ -1580,14 +1594,19 @@ def to_type(spec: Any, ident: O[Any] = None) -> Type:
 
     raise ValueError('Could not figure out specification from argument {}.'.format(spec))
 
-def to_value(t: Type, context: Context) -> Any:
+def get_value(t: Type, context: Context) -> Any:
     if isinstance(t, (Generic, PartialAttr)):
-        return t.to_value(context)
+        return t.get_value(context)
     return t
 
-def update_value(t: Type, value: Any, io: IO, context: Context) -> None:
+def peek_value(t: Type, context: Context) -> Any:
+    if isinstance(t, (Generic, PartialAttr)):
+        return t.peek_value(context)
+    return t
+
+def set_value(t: Type, value: Any, io: IO, context: Context) -> None:
     if isinstance(t, PartialAttr):
-        t.update_value(value, io, context)
+        t.set_value(value, io, context)
 
 def to_size(v: Any, context: Context) -> Mapping[str, int]:
     if not isinstance(v, dict):
