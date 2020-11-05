@@ -405,6 +405,61 @@ def seeking(fd: IO, pos: int, whence: int = os.SEEK_SET) -> None:
     finally:
         fd.seek(oldpos, os.SEEK_SET)
 
+class PartialAttr(Type, G[T]):
+    __slots__ = ('name', 'type', 'values')
+
+    def __init__(self, name: str, type: Type) -> None:
+        self.name = name
+        self.type = type
+        self.values = []
+
+    def parse(self, io: IO, context: Context) -> T:
+        offset = io.tell()
+        value = parse(self.type, io, context)
+        self.values.append((offset, value))
+        return value
+
+    def emit(self, value: T, io: IO, context: Context) -> None:
+        offset = io.tell()
+        self.values.append((offset, value))
+        emit(self.type, value, io, context)
+
+    def sizeof(self, value: O[T], context: Context) -> O[int]:
+        return sizeof(self.type, value, context)
+
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
+    def to_value(self, context: Context) -> T:
+        _, value = self.values.pop()
+        return value
+
+    def update_value(self, value: T, io: IO, context: Context) -> None:
+        offset, _ = self.values.pop()
+        with seeking(io, offset, os.SEEK_SET) as f:
+            emit(self.type, value, f, context)
+
+    def __repr__(self) -> str:
+        return '</.{}: {}>'.format(self.name, repr(self.type).strip('<>'))
+
+class Partial:
+    __slots__ = ('attrs',)
+
+    def __init__(self):
+        self.attrs = {}
+
+    def __getattr__(self, name: str) -> Callable[[Type], PartialAttr]:
+        def make_attr(type: Type) -> Type:
+            self.attrs[name] = PartialAttr(name, type)
+            return self.attrs[name]
+        return make_attr
+
+    def __call__(self, type: Type) -> Type:
+        type = to_type(type)
+        for n, v in self.attrs.items():
+            setattr(type, n, v)
+        return type
+
 class RefPoint(Type, G[T]):
     __slots__ = ('parent', 'type', 'reference')
 
@@ -1010,15 +1065,15 @@ class StructType(Type):
 
 class MetaStruct(type):
     @classmethod
-    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], refs: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
+    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
         attrs = collections.OrderedDict()
         attrs.update({g: Generic() for g in generics})
-        attrs.update({r: Ref() for r in refs})
+        attrs.update({p: Partial() for p in partials})
         if inject:
             attrs.update({c.__name__: c for c in __all_types__})
         return attrs
 
-    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], generics: Sequence[str] = [], refs: Sequence[str] = [], inject: bool = True, **kwargs) -> Any:
+    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, **kwargs) -> Any:
         # Inherit some properties from base types
         gs = []
         bound = []
@@ -1031,8 +1086,8 @@ class MetaStruct(type):
             if type.union:
                 kwargs['union'] = True
 
-        for r in refs:
-            del attrs[r]
+        for p in partials:
+            del attrs[p]
         for g in generics:
             gs.append(attrs.pop(g))
         if inject:
@@ -1518,12 +1573,13 @@ def to_type(spec: Any, ident: O[Any] = None) -> Type:
     raise ValueError('Could not figure out specification from argument {}.'.format(spec))
 
 def to_value(t: Type, context: Context) -> Any:
-    if isinstance(t, Generic):
-        return t.to_value()
+    if isinstance(t, (Generic, PartialAttr)):
+        return t.to_value(context)
     return t
 
 def update_value(t: Type, value: Any, io: IO, context: Context) -> None:
-    pass
+    if isinstance(t, PartialAttr):
+        t.update_value(value, io, context)
 
 def to_size(v: Any, context: Context) -> Mapping[str, int]:
     if not isinstance(v, dict):
