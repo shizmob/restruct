@@ -216,6 +216,9 @@ class Type:
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         return None
 
+    def default(self, context: Context) -> Any:
+        raise NotImplemented
+
 
 ## Type helpers
 
@@ -236,6 +239,9 @@ class Nothing(Type):
 
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return 0
+
+    def default(self, context: Context) -> None:
+        return None
     
     def __repr__(self) -> str:
         return '<{}>'.format(class_name(self))
@@ -254,6 +260,9 @@ class Implied(Type):
 
     def sizeof(self, value: O[Any], context: Context) -> int:
         return 0
+
+    def default(self, context: Context) -> Any:
+        return to_value(self.value, context)
 
     def __repr__(self) -> str:
         return '<-{!r}>'.format(class_name(self), self.value)
@@ -276,7 +285,11 @@ class Fixed(Type):
         io.write(value)
 
     def sizeof(self, value: O[bytes], context: Context) -> O[int]:
-        return len(self.pattern)
+        pattern = to_value(self.pattern, context)
+        return len(pattern)
+
+    def default(self, context: Context) -> bytes:
+        return to_value(self.pattern, context)
 
     def __repr__(self) -> str:
         return '<!{}>'.format(str(self.pattern)[1:])
@@ -292,13 +305,14 @@ class Pad(Type):
         io.read(self.size)
 
     def emit(self, value: None, io: IO, context: Context) -> None:
-        value = to_value(self.value, context)
-        value *= to_value(self.size, context) // len(value)
-        value += value[:self.size - len(value)]
+        value = stretch(to_value(self.value, context), to_value(self.size, context))
         io.write(value)
 
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return to_value(self.size, context)
+
+    def default(self, context: Context) -> bytes:
+        return None
 
     def __repr__(self) -> str:
         return '<{}({}){})>'.format(
@@ -334,6 +348,9 @@ class Data(Type):
             return self.size
         return None
 
+    def default(self, context: Context) -> bytes:
+        return b'\x00' * to_value(self.size, context)
+
     def __repr__(self) -> str:
         return '<{}{}>'.format(
             class_name(self),
@@ -368,6 +385,9 @@ class Enum(Type, G[E_co, T]):
         if value is not None and isinstance(value, self.cls):
             value = value.value
         return _sizeof(self.type, value, context)
+
+    def default(self, context: Context) -> U[E_co, T]:
+        return next(iter(self.cls.__members__.values()))
 
     def __repr__(self) -> str:
         return '<{}({}): {}>'.format(class_name(self), class_name(self.cls), repr(to_type(self.type)).strip('<>'))
@@ -420,6 +440,9 @@ class RefPoint(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return _sizeof(self.type, value, context)
 
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
     def __repr__(self) -> str:
         return '<&?{}{}>'.format(
             {os.SEEK_SET: '', os.SEEK_CUR: '+', os.SEEK_END: '-', 'before_point': '+', 'after_point': '+'}[self.reference],
@@ -462,6 +485,9 @@ class RefValue(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         with context.enter_stream(self.stream):
             return _sizeof(self.type, value, context)
+
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
 
     def __repr__(self) -> str:
         return '<&!{}>'.format(repr(to_type(self.type)).strip('<>'))
@@ -589,6 +615,9 @@ class WithSize(Type, G[T]):
             return size
         return min(size, limit)
 
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
     def __repr__(self) -> str:
         return '<{}: {!r} (limit={})>'.format(class_name(self), to_type(self.type), self.limit)
 
@@ -616,6 +645,9 @@ class AlignTo(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return None # TODO
 
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
     def __repr__(self) -> str:
         return '<{}: {!r} (n={})>'.format(class_name(self), to_type(self.type), self.alignment)
 
@@ -642,6 +674,9 @@ class AlignedTo(Type, G[T]):
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return None # TODO
+
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
 
     def __repr__(self) -> str:
         return '<{}: {!r} (n={})>'.format(class_name(self), self.child, self.alignment)
@@ -694,6 +729,9 @@ class Lazy(Type, G[T]):
             value = value()
         return _sizeof(self.type, value, context)
 
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
     def __str__(self) -> str:
         return '~{}'.format(to_type(self.type))
 
@@ -730,6 +768,13 @@ class Processed(Type, G[T, T2]):
             else:
                 raw = self.do_emit(value)
         return _sizeof(self.type, raw, context)
+
+    def default(self, context: Context) -> T:
+        value = default(self.type, context)
+        if to_value(self.with_context, context):
+            return self.do_parse(value, context)
+        else:
+            return self.do_parse(value)
 
     def __repr__(self) -> str:
         return '<λ{}{!r} ->{} <-{}>'.format(
@@ -781,7 +826,12 @@ class Generic(Type):
             return None
         return _sizeof(self.stack[-1], value, context)
 
-    def to_value(self) -> Any:
+    def default(self, context: Context) -> Any:
+        if not self.stack:
+            raise Error(context, 'unresolved generic')
+        return default(self.stack[-1], context)
+
+    def to_value(self, context: Context) -> Any:
         return self.stack[-1]
 
     def __repr__(self) -> str:
@@ -928,6 +978,20 @@ class StructType(Type):
             g.pop()
 
         return n
+
+    def default(self, context: Context) -> Any:
+        for g, child in zip(self.generics, self.bound):
+            g.resolve(child)
+
+        c = self.cls()
+        for name, type in self.fields.items():
+            with context.enter(name, type):
+                setattr(c, name, default(type, context))
+
+        for g in self.generics:
+            g.pop()
+
+        return c
 
     def __repr__(self) -> str:
         type = 'Union' if self.union else 'Struct'
@@ -1086,6 +1150,14 @@ class Tuple(Type):
 
         return add_sizes(*l)
 
+    def default(self, context: Context) -> Sequence[Any]:
+        value = []
+        for i, type in enumerate(self.types):
+            type = to_type(type, i)
+            with context.enter(i, type):
+                value.append(default(type, context))
+        return tuple(value)
+
     def __repr__(self) -> str:
         return '<(' + ', '.join(repr(to_type(t)) for t in self.types) + ')>'
 
@@ -1182,6 +1254,9 @@ class Arr(Type, G[T]):
 
         return add_sizes(*l)
 
+    def default(self, context: Context) -> Sequence[T]:
+        return []
+
     def __repr__(self) -> str:
         return '<{}({!r}{}{}{})>'.format(
             class_name(self), to_type(self.type),
@@ -1219,6 +1294,9 @@ class Switch(Type):
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         return _sizeof(self.current, value, context)
 
+    def default(self, context: Context) -> Any:
+        return default(self.current, context)
+
     def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), ', '.join(repr(k) + ': ' + repr(v) for k, v in self.options.items()))
 
@@ -1252,6 +1330,9 @@ class Int(Type):
     def sizeof(self, value: O[int], context: Context) -> int:
         bits = to_value(self.bits, context)
         return bits // 8
+
+    def default(self, context: Context) -> int:
+        return 0
 
     def __repr__(self) -> str:
         return '<{}{}({}, {})>'.format(
@@ -1293,6 +1374,9 @@ class Float(Type):
     def sizeof(self, value: O[int], context: Context) -> int:
         bits = to_value(self.bits, context)
         return to_value(bits, context) // 8
+
+    def default(self, context: Context) -> float:
+        return 0.0
 
     def __repr__(self) -> str:
         return '<{}({})>'.format(class_name(self), self.bits)
@@ -1397,6 +1481,9 @@ class Str(Type):
 
         return l
 
+    def default(self, context: Context) -> str:
+        return ''
+
     def __repr__(self) -> str:
         return '<{}{}({}{})>'.format(self.type.capitalize(), class_name(self), '=' if self.exact else '', self.length)
 
@@ -1488,6 +1575,19 @@ def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, params: 
             n += v
         return n
 
+def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> Any:
+    type = to_type(spec)
+    ctx = context or Context(type, params=params)
+    try:
+        return type.default(ctx)
+    except Error:
+        raise
+    except Exception as e:
+        if not context:
+            raise Error(ctx, e)
+        else:
+            raise
+
 
 __all_types__ = {
     # Base types
@@ -1503,5 +1603,5 @@ __all__ = [c.__name__ for c in __all_types__ | {
     # Bases
     IO, Context, Params, Error, Type,
     # Functions
-    parse, emit, sizeof,
+    parse, emit, sizeof, default,
 }]
