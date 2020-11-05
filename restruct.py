@@ -153,13 +153,13 @@ class Params:
             s.reset()
 
 class Context:
-    __slots__ = ('stream_path', 'params', 'root', 'value', 'path', 'user')
+    __slots__ = ('root', 'value', 'path', 'stream_path', 'user', 'params')
 
     def __init__(self, root: 'Type', value: O[Any] = None, params: O[Params] = None) -> None:
-        self.stream_path = []
         self.root = root
         self.value = value
         self.path = []
+        self.stream_path = []
         self.user = types.SimpleNamespace()
         self.params = params or Params()
         self.params.reset()
@@ -202,7 +202,7 @@ class Context:
         return format_path(name for name, parser in self.path)
 
 class Error(Exception):
-    __slots__ = ('path',)
+    __slots__ = ('path', 'stream_path')
 
     def __init__(self, context: Context, exception: Exception) -> None:
         path = context.format_path()
@@ -214,6 +214,7 @@ class Error(Exception):
         ))
         self.exception = exception
         self.path = context.path.copy()
+        self.stream_path = context.stream_path.copy()
 
 class Type:
     __slots__ = ()
