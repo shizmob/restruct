@@ -942,30 +942,28 @@ class StructType(Type):
         n = 0
         pos = io.tell()
 
-        for g, child in zip(self.generics, self.bound):
-            g.resolve(child)
-
         c = self.cls.__new__(self.cls)
         try:
-            for name, type in self.fields.items():
-                with context.enter(name, type):
-                    if type is None:
-                        continue
-                    if self.union:
-                        io.seek(pos, os.SEEK_SET)
+            with self.enter():
+                for name, type in self.fields.items():
+                    with context.enter(name, type):
+                        if type is None:
+                            continue
+                        if self.union:
+                            io.seek(pos, os.SEEK_SET)
 
-                    val = parse(type, io, context)
+                        val = parse(type, io, context)
 
-                    nbytes = io.tell() - pos
-                    if self.union:
-                        n = max(n, nbytes)
-                    else:
-                        n = nbytes
+                        nbytes = io.tell() - pos
+                        if self.union:
+                            n = max(n, nbytes)
+                        else:
+                            n = nbytes
 
-                    setattr(c, name, val)
-                    hook = 'on_parse_' + name
-                    if hasattr(c, hook):
-                        getattr(c, hook)(self.fields, context)
+                        setattr(c, name, val)
+                        hook = 'on_parse_' + name
+                        if hasattr(c, hook):
+                            getattr(c, hook)(self.fields, context)
         except Exception:
             # Check EOF and allow if partial.
             b = io.read(1)
@@ -975,9 +973,6 @@ class StructType(Type):
                 raise
             # allow EOF if partial
 
-        for g in self.generics:
-            g.pop()
-
         io.seek(pos + n, os.SEEK_SET)
         return c
 
@@ -985,85 +980,75 @@ class StructType(Type):
         n = 0
         pos = io.tell()
 
-        for g, child in zip(self.generics, self.bound):
-            g.resolve(child)
-    
-        for name, type in self.fields.items():
-            with context.enter(name, type):
-                if self.union:
-                    io.seek(pos, os.SEEK_SET)
+        with self.enter():
+            for name, type in self.fields.items():
+                with context.enter(name, type):
+                    if self.union:
+                        io.seek(pos, os.SEEK_SET)
 
-                hook = 'on_emit_' + name
-                if hasattr(value, hook):
-                    getattr(value, hook)(self.fields, context)
+                    hook = 'on_emit_' + name
+                    if hasattr(value, hook):
+                        getattr(value, hook)(self.fields, context)
 
-                field = getattr(value, name)
-                emit(type, field, io, context)
+                    field = getattr(value, name)
+                    emit(type, field, io, context)
 
-                nbytes = io.tell() - pos
-                if self.union:
-                    n = max(n, nbytes)
-                else:
-                    n = nbytes
-
-        for g in self.generics:
-            g.pop()
+                    nbytes = io.tell() - pos
+                    if self.union:
+                        n = max(n, nbytes)
+                    else:
+                        n = nbytes
 
         io.seek(pos + n, os.SEEK_SET)
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         n = {}
 
-        for g, child in zip(self.generics, self.bound):
-            g.resolve(child)
+        with self.enter():
+            for name, type in self.fields.items():
+                with context.enter(name, type):
+                    if value:
+                        field = getattr(value, name)
+                    else:
+                        field = None
 
-        for name, type in self.fields.items():
-            with context.enter(name, type):
-                if value:
-                    field = getattr(value, name)
-                else:
-                    field = None
+                    nbytes = _sizeof(type, field, context)
+                    if nbytes is None:
+                        n = None
+                        break
 
-                nbytes = _sizeof(type, field, context)
-                if nbytes is None:
-                    n = None
-                    break
-
-                if self.union:
-                    n = max_sizes(n, nbytes)
-                else:
-                    n = add_sizes(n, nbytes)
-
-        for g in self.generics:
-            g.pop()
+                    if self.union:
+                        n = max_sizes(n, nbytes)
+                    else:
+                        n = add_sizes(n, nbytes)
 
         return n
 
-    def default(self, context: Context) -> Any:
+    @contextmanager
+    def enter(self):
         for g, child in zip(self.generics, self.bound):
             g.resolve(child)
-
-        c = self.cls.__new__(self.cls)
-        for name, type in self.fields.items():
-            with context.enter(name, type):
-                setattr(c, name, default(type, context))
-
+        yield
         for g in self.generics:
             g.pop()
+
+    def default(self, context: Context) -> Any:
+        with self.enter():
+            c = self.cls.__new__(self.cls)
+            for name, type in self.fields.items():
+                with context.enter(name, type):
+                    setattr(c, name, default(type, context))
 
         return c
 
     def __repr__(self) -> str:
         type = 'Union' if self.union else 'Struct'
         if self.fields:
-            for g, child in zip(self.generics, self.bound):
-                g.resolve(child)
-            fields = '{\n'
-            for f, v in self.fields.items():
-                fields += '  ' + f + ': ' + indent(format_value(to_type(v), repr), 2) + ',\n'
-            fields += '}'
-            for g in self.generics:
-                g.pop()
+            with self.enter():
+                fields = '{\n'
+                for f, v in self.fields.items():
+                    fields += '  ' + f + ': ' + indent(format_value(to_type(v), repr), 2) + ',\n'
+                fields += '}'
         else:
             fields = '{}'
         return '<{}({}) {}>'.format(type, class_name(self.cls), fields)
@@ -1131,12 +1116,18 @@ class MetaStruct(type):
 class Struct(metaclass=MetaStruct, inject=False):
     def __init__(self, **kwargs) -> None:
         super().__init__()
-        d = default(self)
-        for k in self:
-            if k not in kwargs:
-                setattr(self, k, getattr(d, k))
-        for k, v in kwargs.items():
-            setattr(self, k ,v)
+
+        st = to_type(self)
+        with st.enter():
+            for k, t in st.fields.items():
+                if k not in kwargs:
+                    v = default(t)
+                else:
+                    v = kwargs.pop(k)
+                setattr(self, k, v)
+
+        if kwargs:
+            raise TypeError('unrecognized fields: {}'.format(', '.join(kwargs)))
 
     def __iter__(self) -> Sequence[Any]:
         return iter(self.__slots__)
@@ -1178,7 +1169,7 @@ class Struct(metaclass=MetaStruct, inject=False):
         return self.__fmt__(repr)
 
 class Union(Struct, metaclass=MetaStruct, union=True, inject=False):
-    def __setattr__(self, name, value):
+    def __setattr__(self, name, value) -> None:
         super().__setattr__(name, value)
 
         io = BytesIO()
