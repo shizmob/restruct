@@ -1153,7 +1153,25 @@ class Struct(metaclass=MetaStruct, inject=False):
         return self.__fmt__(repr)
 
 class Union(Struct, metaclass=MetaStruct, union=True, inject=False):
-    pass
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        io = BytesIO()
+        t = to_type(self)
+        try:
+            emit(t.fields[name], value, io=io)
+        except:
+            return
+
+        for fname, ftype in t.fields.items():
+            if fname == name:
+                continue
+            io.seek(0)
+            try:
+                fvalue = parse(ftype, io)
+                super().__setattr__(fname, fvalue)
+            except:
+                pass
 
 class Tuple(Type):
     __slots__ = ('types',)
