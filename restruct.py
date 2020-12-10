@@ -169,9 +169,9 @@ class Context:
         self.value = value
         self.path = []
         self.stream_path = []
-        self.user = types.SimpleNamespace()
         self.params = params or Params()
         self.params.reset()
+        self.user = self.params.user
 
     @contextmanager
     def enter(self, name: str, type: 'Type') -> None:
