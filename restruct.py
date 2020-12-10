@@ -288,53 +288,30 @@ class Implied(Type):
     def __repr__(self) -> str:
         return '+{!r}'.format(self.value)
 
-class Fixed(Type):
-    __slots__ = ('pattern',)
+class Ignored(Type, G[T]):
+    __slots__ = ('type', 'value')
 
-    def __init__(self, pattern: bytes) -> None:
-        self.pattern = pattern
-
-    def parse(self, io: IO, context: Context) -> bytes:
-        pattern = get_value(self.pattern, context)
-        data = io.read(len(pattern))
-        if data != pattern:
-            raise Error(context, 'Fixed mismatch!\n  wanted: {}\n  found:  {}'.format(
-                format_bytes(pattern), format_bytes(data)
-            ))
-        return data
-
-    def emit(self, value: bytes, io: IO, context: Context) -> None:
-        set_value(self.pattern, value, io, context)
-        io.write(value)
-
-    def sizeof(self, value: O[bytes], context: Context) -> O[int]:
-        pattern = peek_value(self.pattern, context) or b''
-        return len(pattern)
-
-    def default(self, context: Context) -> bytes:
-        return peek_value(self.pattern, context) or b''
-
-    def __repr__(self) -> str:
-        return str(self.pattern)[1:]
-
-class Pad(Type):
-    __slots__ = ('size', 'value',)
-
-    def __init__(self, size: O[int], value: bytes = b'\x00') -> None:
-        self.size = size
+    def __init__(self, type: T, value: O[Any] = None) -> None:
+        self.type = type
         self.value = value
 
     def parse(self, io: IO, context: Context) -> None:
-        io.read(get_value(self.size, context))
+        parse(self.type, io, context)
+        return None
 
     def emit(self, value: None, io: IO, context: Context) -> None:
-        value = stretch(get_value(self.value, context), get_value(self.size, context))
-        io.write(value)
+        value = get_value(self.value, context)
+        if value is None:
+            value = default(self.type, context)
+        return emit(self.type, value, io, context)
 
-    def sizeof(self, value: O[None], context: Context) -> O[int]:
-        return peek_value(self.size, context)
+    def sizeof(self, value: None, context: Context) -> int:
+        value = peek_value(self.value, context)
+        if value is None:
+            value = default(self.type, context)
+        return sizeof(self.type, value, context)
 
-    def default(self, context: Context) -> None:
+    def default(self, context: Context) -> Any:
         return None
 
     def __repr__(self) -> str:
@@ -377,6 +354,54 @@ class Data(Type):
             class_name(self),
             ('[' + str(self.size) + ']') if self.size is not None else '',
         )
+
+class Pad(Type):
+    def __new__(self, size: int, value: bytes) -> Ignored[Data]:
+        return Ignored(Data(size), value)
+
+class Fixed(Type, G[T]):
+    __slots__ = ('pattern', 'type')
+
+    def __init__(self, pattern: Any, type: O[T] = None) -> None:
+        self.pattern = pattern
+        self.type = type
+
+    def parse(self, io: IO, context: Context) -> bytes:
+        pattern = get_value(self.pattern, context)
+        type = to_type(self.type or Data(len(pattern)))
+        data = parse(type, io, context)
+        if data != pattern:
+            raise Error(context, 'Value mismatch!\n  wanted: {}\n  found:  {}'.format(
+                format_value(pattern, repr), format_value(data, repr),
+            ))
+        return data
+
+    def emit(self, value: Any, io: IO, context: Context) -> None:
+        set_value(self.pattern, value, io, context)
+        type = to_type(self.type or Data(len(value)))
+        return emit(type, value, io, context)
+
+    def sizeof(self, value: O[Any], context: Context) -> O[int]:
+        if value is None:
+            value = peek_value(self.pattern, context)
+        if type is None:
+            if value is None:
+                return None
+            type = Data(len(value))
+        else:
+            type = to_type(self.type)
+        return sizeof(type, value, context)
+
+    def default(self, context: Context) -> Any:
+        return peek_value(self.pattern, context)
+
+    def __repr__(self) -> str:
+        if self.type:
+            type = to_type(self.type)
+            return repr(type) + '!' + repr(self.pattern)
+        else:
+            return '!' + repr(self.pattern)[1:]
+
 
 E_co = TypeVar('E_co', bound=enum.Enum)
 
@@ -1728,11 +1753,11 @@ def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> 
 
 __all_types__ = {
     # Base types
-    Nothing, Implied, Fixed, Pad, Data, Enum,
+    Nothing, Data, Implied, Ignored, Pad, Fixed,
     # Modifier types
     Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
     # Compound types
-    StructType, MetaStruct, Struct, Union, Tuple, Any, Arr, Switch,
+    StructType, MetaStruct, Struct, Union, Tuple, Any, Arr, Switch, Enum,
     # Primitive types
     Bool, Int, UInt, Float, Str,
 }
