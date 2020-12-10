@@ -315,7 +315,7 @@ class Fixed(Type):
         return peek_value(self.pattern, context) or b''
 
     def __repr__(self) -> str:
-        return '<!{}>'.format(str(self.pattern)[1:])
+        return str(self.pattern)[1:]
 
 class Pad(Type):
     __slots__ = ('size', 'value',)
@@ -346,7 +346,7 @@ class Pad(Type):
 class Data(Type):
     __slots__ = ('size',)
 
-    def __init__(self, size: O[int]) -> None:
+    def __init__(self, size: O[int] = None) -> None:
         self.size = size
 
     def parse(self, io: IO, context: Context) -> bytes:
@@ -355,7 +355,7 @@ class Data(Type):
             size = -1
         data = io.read(size)
         if size >= 0 and len(data) != size:
-            raise Error(context, 'Size mismatch!\n  wanted {} bytes\n  found  {} bytes'.format(
+            raise Error(context, 'Size mismatch!\n  wanted {} bytes\n  found {} bytes'.format(
                 size, len(data)
             ))
         return data
@@ -849,7 +849,7 @@ class Generic(Type):
 
     def __repr__(self) -> str:
         if self.stack:
-            return '<?{}>'.format(repr(self.stack[-1]).strip('<>'))
+            return '<?{}>'.format(repr(to_type(self.stack[-1])).strip('<>'))
         return '<?unresolved>'
 
     def __deepcopy__(self, memo: Any) -> Any:
@@ -1544,9 +1544,9 @@ def get_value(t: Type, context: Context) -> Any:
         return t.get_value(context)
     return t
 
-def peek_value(t: Type, context: Context) -> Any:
+def peek_value(t: Type, context: Context, default=None) -> Any:
     if isinstance(t, (Generic, PartialAttr)):
-        return t.peek_value(context)
+        return t.peek_value(context, default)
     return t
 
 def set_value(t: Type, value: Any, io: IO, context: Context) -> None:
