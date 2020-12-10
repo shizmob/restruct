@@ -183,7 +183,7 @@ class Context:
     def enter_stream(self, stream: str, io: O[IO] = None, pos: O[int] = None, reference = os.SEEK_SET) -> None:
         stream = self.params.streams[stream]
         if io:
-            if not pos:
+            if pos is None:
                 if stream.offset is None:
                     stream.offset = self.stream_offset(stream)
                     stream.pos = stream.offset
