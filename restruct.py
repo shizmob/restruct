@@ -480,8 +480,8 @@ class PartialAttr(Type, G[T]):
             emit(self.type, value, f, context)
 
     def __matmul__(self, type: Any) -> Type:
-        if isinstance(type, Type):
-            return self(type)
+        if isinstance(type, self.__class__):
+            return type.__rmatmul__(self)
         return NotImplemented
 
     def __rmatmul__(self, type: Any) -> Type:
