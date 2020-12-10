@@ -1274,38 +1274,33 @@ class Any(Type):
 
 
 class Arr(Type, G[T]):
-    __slots__ = ('type', 'count', 'size', 'stop_value')
+    __slots__ = ('type', 'count', 'stop_value')
 
-    def __init__(self, type: T, count: O[int] = None, size: O[int] = None, stop_value: O[Any] = None) -> None:
+    def __init__(self, type: T, count: O[int] = None, stop_value: O[Any] = None) -> None:
         self.type = type
         self.count = count
-        self.size = size
         self.stop_value = stop_value
 
     def parse(self, io: IO, context: Context) -> Sequence[T]:
         value = []
 
         count = get_value(self.count, context)
-        size = get_value(self.size, context)
         stop_value = get_value(self.stop_value, context)
 
         i = 0
-        start = io.tell()
         while count is None or i < count:
-            if size is not None and io.tell() - start >= size:
-                break
-            
             if isinstance(self.type, list):
                 type = to_type(self.type[i], i)
             else:
                 type = to_type(self.type, i)
 
             with context.enter(i, type):
+                pos = io.tell()
                 try:
                     elem = parse(type, io, context)
                 except Exception:
                     # Check EOF.
-                    if not io.read(1):
+                    if io.tell() == pos and not io.read(1):
                         break
                     io.seek(-1, os.SEEK_CUR)
                     raise
@@ -1320,7 +1315,6 @@ class Arr(Type, G[T]):
 
     def emit(self, value: Sequence[T], io: IO, context: Context) -> None:
         set_value(self.count, len(value), io, context)
-        size = get_value(self.size, context)
         stop_value = get_value(self.stop_value, context)
 
         if stop_value is not None:
@@ -1328,9 +1322,6 @@ class Arr(Type, G[T]):
 
         start = io.tell()
         for i, elem in enumerate(value):
-            if size is not None and io.tell() - start >= size:
-                raise ValueError('oversized array, maximum size {}'.format(size))
-
             if isinstance(self.type, list):
                 type = to_type(self.type[i], i)
             else:
@@ -1339,18 +1330,13 @@ class Arr(Type, G[T]):
             with context.enter(i, type):
                 emit(type, elem, io, context)
 
-        set_value(self.size, io.tell() - start, io, context)
-
     def sizeof(self, value: O[Sequence[T]], context: Context) -> int:
         if value is None:
             count = peek_value(self.count, context)
         else:
             count = len(value)
-        size = peek_value(self.size, context)
         stop_value = peek_value(self.stop_value, context)
 
-        if size is not None:
-            return size
         if count is None:
             return None
 
@@ -1375,10 +1361,9 @@ class Arr(Type, G[T]):
         return []
 
     def __repr__(self) -> str:
-        return '<{}({!r}{}{}{})>'.format(
+        return '<{}({!r}{}{})>'.format(
             class_name(self), to_type(self.type),
             ('[' + str(self.count) + ']') if self.count is not None else '',
-            (', size: ' + str(self.size)) if self.size is not None else '',
             (', stop: ' + repr(self.stop_value)) if self.stop_value is not None else '',
         )
 
