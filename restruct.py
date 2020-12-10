@@ -237,8 +237,8 @@ class Type:
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         return None
 
-    def default(self, context: Context) -> Any:
-        raise NotImplemented
+    def default(self, context: Context) -> O[Any]:
+        return None
 
 
 ## Type helpers
@@ -1411,13 +1411,12 @@ class Switch(Type):
         else:
             return self.fallback
 
-    def peek_value(self, context) -> T:
-        if self.selector is not None:
-            return self._get(peek_value(self.selector, context, self.default_key))
-        elif self.default_key is not None:
-            return self._get(self.default_key)
-        elif self.fallback is None:
-            raise ValueError('Selector not set!')
+    def peek_value(self, context) -> O[T]:
+        selector = self.selector
+        if selector is not None:
+            selector = peek_value(self.selector, context, self.default_key)
+        if selector is not None:
+            return self._get(selector)
         else:
             return self.fallback
 
@@ -1438,10 +1437,16 @@ class Switch(Type):
         return emit(self.get_value(context), value, io, context)
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
-        return _sizeof(self.peek_value(context), value, context)
+        type = self.peek_value(context)
+        if type is None:
+            return None
+        return _sizeof(type, value, context)
 
-    def default(self, context: Context) -> Any:
-        return default(self.peek_value(context), context)
+    def default(self, context: Context) -> O[Any]:
+        type = self.peek_value(context)
+        if type is None:
+            return None
+        return default(type, context)
 
     def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), ', '.join(repr(k) + ': ' + repr(v) for k, v in self.options.items()))
@@ -1737,7 +1742,7 @@ def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, params: 
             n += v
         return n
 
-def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> Any:
+def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> O[Any]:
     type = to_type(spec)
     ctx = context or Context(type, params=params)
     try:
