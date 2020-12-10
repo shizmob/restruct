@@ -265,7 +265,7 @@ class Nothing(Type):
         return None
     
     def __repr__(self) -> str:
-        return '<{}>'.format(class_name(self))
+        return class_name(self)
 
 class Implied(Type):
     __slots__ = ('value',)
@@ -286,7 +286,7 @@ class Implied(Type):
         return peek_value(self.value, context)
 
     def __repr__(self) -> str:
-        return '<-{!r}>'.format(class_name(self), self.value)
+        return '+{!r}'.format(self.value)
 
 class Fixed(Type):
     __slots__ = ('pattern',)
@@ -338,9 +338,9 @@ class Pad(Type):
         return None
 
     def __repr__(self) -> str:
-        return '<{}({}){})>'.format(
-            class_name(self), self.size,
-            format_bytes(self.value) if isinstance(self.value, bytes) else self.value,
+        return '-{!r}{}'.format(
+            class_name(self).strip('<>'),
+            '(' + repr(self.value) + ')' if self.value is not None else '',
         )
 
 class Data(Type):
@@ -355,7 +355,7 @@ class Data(Type):
             size = -1
         data = io.read(size)
         if size >= 0 and len(data) != size:
-            raise Error(context, 'Size mismatch!\n  wanted {} bytes\n  found {} bytes'.format(
+            raise Error(context, 'Size mismatch!\n  wanted: {} bytes\n  found:  {} bytes'.format(
                 size, len(data)
             ))
         return data
