@@ -1216,6 +1216,63 @@ class Tuple(Type):
     def __repr__(self) -> str:
         return '<(' + ', '.join(repr(to_type(t)) for t in self.types) + ')>'
 
+
+class Any(Type):
+    __slots__ = ('types')
+
+    def __init__(self, types: Sequence[Type]) -> None:
+        self.types = types
+
+    def parse(self, io: IO, context: Context) -> Any:
+        errors = []
+        types = []
+        start = io.tell()
+
+        for i, type in enumerate(self.types):
+            io.seek(start, os.SEEK_SET)
+            type = to_type(type, i)
+            with context.enter(i, type):
+                try:
+                    return parse(type, io, context)
+                except Exception as e:
+                    types.append(type)
+                    errors.append(e)
+
+        raise Error(context, 'Failed to parse using any of the following:\n' + '\n'.join(
+            ' - {!r} => {}: {}'.format(t, class_name(e), indent(str(e), 2))
+            for (t, e) in zip(types, errors)
+        ))
+
+    def emit(self, value: Any, io: IO, context: Context) -> None:
+        errors = []
+        types = []
+        start = io.tell()
+
+        for i, type in enumerate(self.types):
+            io.seek(start, os.SEEK_SET)
+            type = to_type(type, i)
+            with context.enter(i, type):
+                try:
+                    return emit(type, val, io, context)
+                except Exception as e:
+                    types.append(type)
+                    errors.append(e)
+
+        raise Error(context, 'Failed to emit using any of the following:\n' + '\n'.join(
+            ' - {!r} => {}: {}'.format(t, class_name(e), indent(str(e), 2))
+            for (t, e) in zip(types, errors)
+        ))
+
+    def sizeof(self, value: O[Any], context: Context) -> O[int]:
+        return None
+
+    def default(self, context: Context) -> O[Any]:
+        return None
+
+    def __repr__(self) -> str:
+        return '<Any[' + ', '.join(repr(to_type(t, i)) for i, t in enumerate(self.types)) + ']>'
+
+
 class Arr(Type, G[T]):
     __slots__ = ('type', 'count', 'size', 'stop_value')
 
@@ -1671,7 +1728,7 @@ __all_types__ = {
     # Modifier types
     Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
     # Compound types
-    StructType, MetaStruct, Struct, Union, Tuple, Arr, Switch,
+    StructType, MetaStruct, Struct, Union, Tuple, Any, Arr, Switch,
     # Primitive types
     Bool, Int, UInt, Float, Str,
 }
