@@ -743,10 +743,10 @@ class Lazy(Type, G[T]):
         self.size = size
 
     def parse(self, io: IO, context: Context) -> T:
-        size = self.sizeof(None, context)
+        size = self.sizeof(None, context)[context.stream_path[-1].name]
         if size is None:
             raise ValueError('lazy type size must be known at parse-time')
-        entry = LazyEntry(to_parser(self.type), io, context)
+        entry = LazyEntry(to_type(self.type), io, context)
         io.seek(size, os.SEEK_CUR)
         return entry
     
@@ -754,7 +754,7 @@ class Lazy(Type, G[T]):
         emit(self.type, value(), io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        length = peek_value(self.length, context)
+        length = peek_value(self.size, context)
         if length is not None:
             return length
         if value is not None:
