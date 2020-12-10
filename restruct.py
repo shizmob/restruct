@@ -1408,11 +1408,11 @@ class Float(Type):
     def parse(self, io: IO, context: Context) -> float:
         bits = get_value(self.bits, context)
         bs = io.read(bits // 8)
-        return struct.unpack(self.FORMAT[bits], bs)[0]
+        return struct.unpack(self.FORMATS[bits], bs)[0]
 
     def emit(self, value: float, io: IO, context: Context) -> None:
         bits = get_value(self.bits, context)
-        bs = struct.pack(self.FORMAT[bits], value)
+        bs = struct.pack(self.FORMATS[bits], value)
         io.write(bs)
 
     def sizeof(self, value: O[int], context: Context) -> int:
