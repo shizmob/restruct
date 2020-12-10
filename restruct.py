@@ -1251,6 +1251,8 @@ class Any(Type):
                 try:
                     return parse(type, io, context)
                 except Exception as e:
+                    if isinstance(e, Error):
+                        e = e.exception
                     types.append(type)
                     errors.append(e)
 
