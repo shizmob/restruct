@@ -1368,36 +1368,55 @@ class Arr(Type, G[T]):
         )
 
 class Switch(Type):
-    __slots__ = ('options', 'selector', 'fallback')
+    __slots__ = ('options', 'selector', 'default_key', 'fallback')
 
     def __init__(self, default: O[Any] = None, fallback: O[T] = None, options: Mapping[Any, T] = None) -> None:
         self.options = options or {}
-        self.selector = default
+        self.selector = None
+        self.default_key = default
         self.fallback = fallback
 
-    @property
-    def current(self) -> T:
-        if self.selector is None and not self.fallback:
-            raise ValueError('Selector not set!')
-        if self.selector not in self.options and not self.fallback:
+    def _get(self, sel) -> T:
+        if sel not in self.options and not self.fallback:
             raise ValueError('Selector {} is invalid! [options: {}]'.format(
-                self.selector, ', '.join(repr(x) for x in self.options.keys())
+                sel, ', '.join(repr(x) for x in self.options.keys())
             ))
-        if self.selector is not None and self.selector in self.options:
-            return self.options[self.selector]
-        return self.fallback
+        if sel is not None and sel in self.options:
+            return self.options[sel]
+        else:
+            return self.fallback
+
+    def peek_value(self, context) -> T:
+        if self.selector is not None:
+            return self._get(peek_value(self.selector, context, self.default_key))
+        elif self.default_key is not None:
+            return self._get(self.default_key)
+        elif self.fallback is None:
+            raise ValueError('Selector not set!')
+        else:
+            return self.fallback
+
+    def get_value(self, context) -> T:
+        if self.selector is not None:
+            return self._get(get_value(self.selector, context))
+        elif self.default_key is not None:
+            return self._get(self.default_key)
+        elif self.fallback is None:
+            raise ValueError('Selector not set!')
+        else:
+            return self.fallback
 
     def parse(self, io: IO, context: Context) -> Any:
-        return parse(self.current, io, context)
+        return parse(self.get_value(context), io, context)
 
     def emit(self, value: Any, io: IO, context: Context) -> None:
-        return emit(self.current, value, io, context)
+        return emit(self.get_value(context), value, io, context)
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
-        return _sizeof(self.current, value, context)
+        return _sizeof(self.peek_value(context), value, context)
 
     def default(self, context: Context) -> Any:
-        return default(self.current, context)
+        return default(self.peek_value(context), context)
 
     def __repr__(self) -> str:
         return '<{}: {}>'.format(class_name(self), ', '.join(repr(k) + ': ' + repr(v) for k, v in self.options.items()))
