@@ -420,9 +420,9 @@ class Enum(Type, G[E_co, T]):
 class PartialAttr(Type, G[T]):
     __slots__ = ('name', 'type', 'values')
 
-    def __init__(self, name: str, type: Type) -> None:
+    def __init__(self, name: str) -> None:
         self.name = name
-        self.type = type
+        self.type = None
         self.values = []
 
     def parse(self, io: IO, context: Context) -> T:
@@ -446,13 +446,27 @@ class PartialAttr(Type, G[T]):
         _, value = self.values.pop()
         return value
 
-    def peek_value(self, context: Context) -> T:
-        return None
+    def peek_value(self, context: Context, default=None) -> T:
+        return default
 
     def set_value(self, value: T, io: IO, context: Context) -> None:
         offset, _ = self.values.pop()
         with seeking(io, offset, os.SEEK_SET) as f:
             emit(self.type, value, f, context)
+
+    def __matmul__(self, type: Any) -> Type:
+        if isinstance(type, Type):
+            return self(type)
+        return NotImplemented
+
+    def __rmatmul__(self, type: Any) -> Type:
+        if isinstance(type, Type):
+            return self(type)
+        return NotImplemented
+
+    def __call__(self, type: Type) -> Type:
+        self.type = type
+        return self
 
     def __repr__(self) -> str:
         return '</.{}: {}>'.format(self.name, repr(self.type).strip('<>'))
@@ -463,11 +477,19 @@ class Partial:
     def __init__(self):
         self.attrs = {}
 
-    def __getattr__(self, name: str) -> Callable[[Type], PartialAttr]:
-        def make_attr(type: Type) -> Type:
-            self.attrs[name] = PartialAttr(name, type)
-            return self.attrs[name]
-        return make_attr
+    def __getattr__(self, name: str) -> PartialAttr:
+        self.attrs[name] = PartialAttr(name)
+        return self.attrs[name]
+
+    def __matmul__(self, type: Any) -> Type:
+        if isinstance(type, Type):
+            return self(type)
+        return NotImplemented
+
+    def __rmatmul__(self, type: Any) -> Type:
+        if isinstance(type, Type):
+            return self(type)
+        return NotImplemented
 
     def __call__(self, type: Type) -> Type:
         type = to_type(type)
