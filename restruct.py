@@ -8,7 +8,7 @@ import collections
 import itertools
 from contextlib import contextmanager
 
-from typing import Generic as G, Union as U, TypeVar, Any, Callable, Sequence, Mapping, Optional as O
+from typing import Generic as G, Union as U, TypeVar, Any, Callable, Sequence, Mapping, Optional as O, Tuple as TU
 
 
 ## Helpers
@@ -121,20 +121,71 @@ def seeking(fd: 'IO', pos: int, whence: int = os.SEEK_SET) -> None:
 ## Bases 
 
 class IO:
-    __slots__ = ()
+    __slots__ = ('handle', 'bit_left', 'bit_val')
 
-    seekable = False
-    readable = False
-    writable = False
+    def __init__(self, handle) -> None:
+        self.handle = handle
+        self.bit_left = 0
+        self.bit_val = None
 
     def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
-        raise NotImplemented
+        return self.handle.seek(n, whence)
 
-    def read(self, n: int) -> bytes:
-        raise NotImplemented
+    def tell(self) -> int:
+        return self.handle.tell()
 
-    def write(self, b: bytes) -> None:
-        raise NotImplemented
+    def get_bits(self, n: int) -> TU[int, int]:
+        if n > 0 and self.bit_left == 0:
+            self.bit_val = self.handle.read(1)[0]
+            self.bit_left = 8
+        nb = min(n, self.bit_left)
+        val = self.bit_val & ((1 << nb) - 1)
+        self.bit_val >>= nb
+        self.bit_left -= nb
+        return n - nb, val
+
+    def put_bits(self, val: int, n: int) -> TU[int, int]:
+        if n > 0 and self.bit_left == 0:
+            self.bit_left = 8
+            self.bit_val = 0
+        nb = min(n, self.bit_left)
+        self.bit_val |= (val & ((1 << nb) - 1)) << (8 - self.bit_left)
+        self.bit_left -= nb
+        if nb > 0 and self.bit_left == 0:
+            self.handle.write(bytes([self.bit_val]))
+        return n - nb, (val >> nb)
+
+    def read(self, n: O[int], *, bits: bool = False) -> U[bytes, int]:
+        if bits:
+            nl, val = self.get_bits(n)
+            if nl >= 8:
+                rounds = n // 8
+                val |= int.from_bytes(self.handle.read(rounds), byteorder='big') << (n - nl)
+                nl -= 8 * rounds
+            if nl > 0:
+                _, v = self.get_bits(nl)
+                val |= v << (n - nl)
+            return val
+        elif self.bit_left > 0:
+            raise ValueError('misaligned read')
+        else:
+            return self.handle.read(n)
+
+    def write(self, b: U[bytes, int], *, bits: O[int] = None) -> None:
+        if bits is not None:
+            n, b = self.put_bits(b, bits)
+            if n > 8:
+                rounds = n // 8
+                shift = 8 * rounds
+                self.handle.write((b & ((1 << shift) - 1)).to_bytes(rounds, byteorder='big'))
+                b >>= shift
+                n -= shift
+            if n > 0:
+                self.put_bits(b, n)
+        elif self.bit_left > 0:
+            raise ValueError('misaligned write')
+        else:
+            return self.handle.write(b)
 
 class Stream:
     __slots__ = ('name', 'offset', 'dependents', 'pos')
@@ -318,6 +369,32 @@ class Ignored(Type, G[T]):
         return '-{!r}{}'.format(
             class_name(self).strip('<>'),
             '(' + repr(self.value) + ')' if self.value is not None else '',
+        )
+
+class Bits(Type):
+    __slots__ = ('size',)
+
+    def __init__(self, size: O[int] = None) -> None:
+        self.size = size
+
+    def parse(self, io: IO, context: Context) -> int:
+        size = get_value(self.size, context)
+        return io.read(size, bits=True)
+
+    def emit(self, value: int, io: IO, context: Context) -> None:
+        size = get_value(self.size, context)
+        io.write(value, bits=size)
+
+    def sizeof(self, value: O[int], context: Context) -> O[int]:
+        return peek_value(self.size, context) // 8
+
+    def default(self, context: Context) -> int:
+        return 0
+
+    def __repr__(self) -> str:
+        return '<{}{}>'.format(
+            class_name(self),
+            ('[' + str(self.size) + ']') if self.size is not None else '',
         )
 
 class Data(Type):
@@ -1656,11 +1733,13 @@ class Str(Type):
 ## Main functions
 
 def to_io(value: Any) -> IO:
+    if isinstance(value, IO):
+        return value
     if value is None:
-        return BytesIO()
+        value = BytesIO()
     if isinstance(value, (bytes, bytearray)):
-        return BytesIO(value)
-    return value
+        value = BytesIO(value)
+    return IO(value)
 
 def to_type(spec: Any, ident: O[Any] = None) -> Type:
     if isinstance(spec, Type):
@@ -1717,7 +1796,7 @@ def emit(spec: Any, value: Any, io: O[IO] = None, context: O[Context] = None, pa
     ctx = context or Context(type, value, params=params)
     try:
         type.emit(value, io, ctx)
-        return io
+        return io.handle
     except Error:
         raise
     except Exception as e:
@@ -1764,7 +1843,7 @@ def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> 
 
 __all_types__ = {
     # Base types
-    Nothing, Data, Implied, Ignored, Pad, Fixed,
+    Nothing, Bits, Data, Implied, Ignored, Pad, Fixed,
     # Modifier types
     Ref, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
     # Compound types
