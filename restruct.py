@@ -591,11 +591,12 @@ class Ref(Type, G[T]):
         )
 
 class SizedFile:
-    def __init__(self, file: IO, limit: int, exact: bool = False) -> None:
+    def __init__(self, file: IO, limit: int, exact: bool = False, rebased: bool = False) -> None:
         self._file = file
         self._pos = 0
         self._limit = limit
         self._start = file.tell()
+        self._rebased = rebased
 
     def read(self, n: int = -1) -> bytes:
         remaining = self._limit - self._pos
@@ -615,9 +616,11 @@ class SizedFile:
     def seek(self, offset: int, whence: int) -> None:
         if whence == os.SEEK_SET:
             pos = offset
+            if self._rebased:
+                pos += self._start
         elif whence == os.SEEK_CUR:
             pos = self._start + self._pos + offset
-        elif whence == os.SEEK_SET:
+        elif whence == os.SEEK_END:
             pos = self._start + self._limit - offset
         if pos < self._start:
             raise OSError(errno.EINVAL, os.strerror(errno.EINVAL), offset)
@@ -625,35 +628,40 @@ class SizedFile:
         return self._file.seek(pos, os.SEEK_SET)
 
     def tell(self) -> int:
-        return self._start + self._pos
+        if self._rebased:
+            return self._pos
+        else:
+            return self._start + self._pos
 
     def __getattr__(self, n: str) -> Any:
         return getattr(self._file, n)
 
 class WithSize(Type, G[T]):
-    __slots__ = ('type', 'limit', 'exact')
+    __slots__ = ('type', 'limit', 'exact', 'rebased')
 
-    def __init__(self, type: Type, limit: O[int] = None, exact: bool = False) -> None:
+    def __init__(self, type: Type, limit: O[int] = None, exact: bool = False, rebased: bool = False) -> None:
         self.type = type
         self.limit = limit
         self.exact = exact
+        self.rebased = rebased
 
     def parse(self, io: IO, context: Context) -> T:
         start = io.tell()
         limit = get_value(self.limit, context)
-        capped = SizedFile(io, limit)
+        rebased = get_value(self.rebased, context)
+        exact = get_value(self.exact, context)
+        capped = SizedFile(io, limit, exact, rebased)
         value = parse(self.type, capped, context)
-        if self.exact:
+        if exact:
             io.seek(start + limit, os.SEEK_SET)
         return value
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         start = io.tell()
-        if self.exact:
-            limit = get_value(self.limit, context)
-            capped = SizedFile(io, limit)
-        else:
-            capped = io
+        limit = get_value(self.limit, context)
+        rebased = get_value(self.rebased, context)
+        exact = get_value(self.exact, context)
+        capped = SizedFile(io, limit, exact, rebased)
         ret = emit(self.type, value, capped, context)
         if self.exact:
             io.seek(start + limit, os.SEEK_SET)
