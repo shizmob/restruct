@@ -45,7 +45,7 @@ def format_value(value: Any, formatter: Callable[[Any], str], indentation: int =
             values = [indent(',\n'.join(format_value(v, formatter) for v in value), 2, True)]
         elif l > 0:
             fmt = '{{{}}}' if is_set else '[{}]'
-            values = [','.join(format_value(v, formatter) for v in value)]
+            values = [', '.join(format_value(v, formatter) for v in value)]
         else:
             fmt = '{{}}' if is_set else '[]'
             values = []
