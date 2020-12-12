@@ -443,9 +443,10 @@ class Enum(Type, G[E_co, T]):
 ## Modifier types
 
 class PartialAttr(Type, G[T]):
-    __slots__ = ('name', 'type', 'values')
+    __slots__ = ('parent', 'name', 'type', 'values')
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, parent: 'Partial', name: str) -> None:
+        self.parent = parent
         self.name = name
         self.type = None
         self.values = []
@@ -453,12 +454,14 @@ class PartialAttr(Type, G[T]):
     def parse(self, io: IO, context: Context) -> T:
         offset = io.tell()
         value = parse(self.type, io, context)
-        self.values.append((offset, value))
+        for _ in self.parent.types:
+            self.values.append((offset, value))
         return value
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         offset = io.tell()
-        self.values.append((offset, value))
+        for _ in self.parent.types:
+            self.values.append((offset, value))
         emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
@@ -497,13 +500,14 @@ class PartialAttr(Type, G[T]):
         return '</.{}: {}>'.format(self.name, repr(self.type).strip('<>'))
 
 class Partial:
-    __slots__ = ('attrs',)
+    __slots__ = ('types', 'attrs')
 
     def __init__(self):
+        self.types = []
         self.attrs = {}
 
     def __getattr__(self, name: str) -> PartialAttr:
-        self.attrs[name] = PartialAttr(name)
+        self.attrs[name] = PartialAttr(self, name)
         return self.attrs[name]
 
     def __matmul__(self, type: Any) -> Type:
@@ -520,6 +524,7 @@ class Partial:
         type = to_type(type)
         for n, v in self.attrs.items():
             setattr(type, n, v)
+        self.types.append(type)
         return type
 
 class Ref(Type, G[T]):
