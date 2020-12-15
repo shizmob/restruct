@@ -297,10 +297,8 @@ Standard types
 
 ---
 
-* `Ref()`: initialises a new point-value reference pair
-   - `ref.point(point_type, reference=os.SEEK_SET):` parses and emits the data containing the offset to the referred value
-   - `ref.value(value_type):` parses and emits the referred value
-   - `ref(value_type, point_type, reference=os.SEEK_SET):` parses and emits a value of `value_type` pointed to by an offset of type `point_type`
+* `Ref(type, point, reference=os.SEEK_SET, adjustment=0, stream=None)`: parses and emits a value of `type` elsewhere in the stream at offset `point`
+* `WithBase(type, base=None):` parses and emits `type`, shifting the input position for absolute `Ref` references to `base` (default: file position on parse/emit time)
 * `WithSize(type, limit=None, exact=False):` parses and emits `type`, limiting its size in the tream to `limit` bytes
 * `AlignTo(type, alignment, value?=b'\x00'):` parses and emits `type`, aligning stream to alignment bytes **after**
 * `AlignedTo(type, alignment, value?=b'\x00'):` parse and emits `type`, aligning stream to alignment bytes **before**
