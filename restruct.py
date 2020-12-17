@@ -528,13 +528,14 @@ class Enum(Type, G[E_co, T]):
 ## Modifier types
 
 class PartialAttr(Type, G[T]):
-    __slots__ = ('parent', 'name', 'type', 'values')
+    __slots__ = ('parent', 'name', 'type', 'values', 'pvalues')
 
     def __init__(self, parent: 'Partial', name: str) -> None:
         self.parent = parent
         self.name = name
         self.type = None
         self.values = []
+        self.pvalues = []
 
     def parse(self, io: IO, context: Context) -> T:
         offset = io.tell()
@@ -550,16 +551,23 @@ class PartialAttr(Type, G[T]):
         emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
+        for _ in self.parent.types:
+            self.pvalues.append(value)
         return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
-        return default(self.type, context)
+        value = default(self.type, context)
+        for _ in self.parent.types:
+            self.pvalues.append(value)
+        return value
 
     def get_value(self, context: Context) -> T:
         _, value = self.values.pop()
         return value
 
     def peek_value(self, context: Context, default=None) -> T:
+        if self.pvalues:
+            return self.pvalues.pop()
         return default
 
     def set_value(self, value: T, io: IO, context: Context) -> None:
