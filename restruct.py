@@ -1024,29 +1024,30 @@ class Processed(Type, G[T, T2]):
         )
 
 class Checked(Type, G[T]):
-    __slots__ = ('type', 'check')
+    __slots__ = ('type', 'check', 'message')
 
-    def __init__(self, type: T, check: Callable[[T], bool]) -> None:
+    def __init__(self, type: T, check: Callable[[T], bool], message: O[str] = None) -> None:
         self.type = type
         self.check = check
+        self.message = message or 'check failed'
 
     def parse(self, io: IO, context: Context) -> T:
         check = get_value(self.check, context)
         value = parse(self.type, io, context)
         if not check(value):
-            raise Error(context, 'check failed')
+            raise Error(context, self.message.format(value))
         return value
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         check = get_value(self.check, context)
         if not check(value):
-            raise Error(context, 'check failed')
+            raise Error(context, self.message.format(value))
         return emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         check = peek_value(self.check, context)
         if value is not None and not check(value):
-            raise Error(context, 'check failed')
+            raise Error(context, self.message.format(value))
         return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
