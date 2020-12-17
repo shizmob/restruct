@@ -128,19 +128,19 @@ def seeking(fd: 'IO', pos: int, whence: int = os.SEEK_SET) -> None:
 
 ## Bases 
 
-class IO:
-    __slots__ = ('handle', 'bit_left', 'bit_val')
+class BitAlignment(enum.Enum):
+    No = enum.auto()
+    Fill = enum.auto()
+    Yes = enum.auto()
 
-    def __init__(self, handle) -> None:
+class IO:
+    __slots__ = ('handle', 'bit_left', 'bit_val', 'bit_align')
+
+    def __init__(self, handle, bit_align = BitAlignment.No) -> None:
         self.handle = handle
         self.bit_left = 0
         self.bit_val = None
-
-    def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
-        return self.handle.seek(n, whence)
-
-    def tell(self) -> int:
-        return self.handle.tell()
+        self.bit_align = bit_align
 
     def get_bits(self, n: int) -> TU[int, int]:
         if n > 0 and self.bit_left == 0:
@@ -161,7 +161,13 @@ class IO:
         self.bit_left -= nb
         if nb > 0 and self.bit_left == 0:
             self.handle.write(bytes([self.bit_val]))
+            self.bit_val = None
         return n - nb, (val >> nb)
+
+    def flush_bits(self):
+        if self.bits_left == 0:
+            return
+        self.put_bits(0, 8 - self.bit_left)
 
     def read(self, n: O[int], *, bits: bool = False) -> U[bytes, int]:
         if bits:
@@ -174,10 +180,15 @@ class IO:
                 _, v = self.get_bits(nl)
                 val |= v << (n - nl)
             return val
-        elif self.bit_left > 0:
-            raise ValueError('misaligned read')
-        else:
-            return self.handle.read(n)
+        if self.bit_left > 0:
+            if self.bit_align == BitAlignment.No:
+                raise ValueError('misaligned read')
+            elif self.bit_align == BitAlignment.Yes:
+                return self.read(n * 8, bits=True)
+            elif self.bit_align == BitAlignment.Fill:
+                self.bit_left = 0
+                self.bit_val = None
+        return self.handle.read(n)
 
     def write(self, b: U[bytes, int], *, bits: O[int] = None) -> None:
         if bits is not None:
@@ -190,10 +201,34 @@ class IO:
                 n -= shift
             if n > 0:
                 self.put_bits(b, n)
-        elif self.bit_left > 0:
-            raise ValueError('misaligned write')
-        else:
-            return self.handle.write(b)
+            return
+        if self.bit_left > 0:
+            if self.bit_align == BitAlignment.No:
+                raise ValueError('misaligned write')
+            elif self.bit_align == BitAlignment.Yes:
+                return self.write(int.from_bytes(b, byteorder='big'), bits=len(b) * 8)
+            elif self.bit_align == BitAlignment.Fill:
+                self.flush_bits()
+        return self.handle.write(b)
+
+    def flush(self):
+        if self.bit_align == BitAlignment.Fill:
+            self.flush_bits()
+        return self.handle.flush()
+
+    def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
+        return self.handle.seek(n, whence)
+
+    def tell(self) -> int:
+        return self.handle.tell()
+
+    @contextmanager
+    def wrapped(self, handle):
+        self.flush()
+        old = self.handle
+        self.handle = handle
+        yield
+        self.handle = old
 
 class Stream:
     __slots__ = ('name', 'offset', 'dependents', 'pos')
@@ -713,13 +748,13 @@ class WithBase(Type, G[T]):
 
     def parse(self, io: IO, context: Context) -> T:
         base = get_value(self.base, context)
-        rebased = RebasedFile(io, base)
-        return parse(self.type, rebased, context)
+        with io.wrapped(RebasedFile(io.handle, base)):
+            return parse(self.type, io, context)
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         base = get_value(self.base, context)
-        rebased = RebasedFile(io, base)
-        return emit(self.type, value, rebased, context)
+        with io.wrapped(RebasedFile(io.handle, base)):
+            return emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return sizeof(self.type, value, context)
@@ -782,8 +817,8 @@ class WithSize(Type, G[T]):
         start = io.tell()
         limit = max(0, get_value(self.limit, context))
         exact = get_value(self.exact, context)
-        capped = SizedFile(io, limit, exact)
-        value = parse(self.type, capped, context)
+        with io.wrapped(SizedFile(io.handle, limit, exact)):
+            value = parse(self.type, io, context)
         if exact:
             io.seek(start + limit, os.SEEK_SET)
         return value
@@ -792,9 +827,9 @@ class WithSize(Type, G[T]):
         start = io.tell()
         limit = get_value(self.limit, context)
         exact = get_value(self.exact, context)
-        capped = SizedFile(io, limit, exact)
-        ret = emit(self.type, value, capped, context)
-        if self.exact:
+        with io.wrapped(SizedFile(io, limit, exact)):
+            ret = emit(self.type, value, io, context)
+        if exact:
             io.seek(start + limit, os.SEEK_SET)
         else:
             set_value(self.limit, io.tell() - start, io, context)
