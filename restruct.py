@@ -469,7 +469,7 @@ class Fixed(Type, G[T]):
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         if value is None:
             value = peek_value(self.pattern, context)
-        if type is None:
+        if self.type is None:
             if value is None:
                 return None
             type = Data(len(value))
