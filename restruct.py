@@ -403,7 +403,7 @@ class Ignored(Type, G[T]):
         value = peek_value(self.value, context)
         if value is None:
             value = default(self.type, context)
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> Any:
         return None
@@ -510,7 +510,7 @@ class Fixed(Type, G[T]):
             type = Data(len(value))
         else:
             type = to_type(self.type)
-        return sizeof(type, value, context)
+        return _sizeof(type, value, context)
 
     def default(self, context: Context) -> Any:
         return peek_value(self.pattern, context)
@@ -760,7 +760,7 @@ class WithBase(Type, G[T]):
             return emit(self.type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        return sizeof(self.type, value, context)
+        return _sizeof(self.type, value, context)
 
     def default(self, context: Context) -> T:
         return default(self.type, context)
