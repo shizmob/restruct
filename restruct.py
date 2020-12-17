@@ -227,7 +227,7 @@ class IO:
         self.flush()
         old = self.handle
         self.handle = handle
-        yield
+        yield self
         self.handle = old
 
 class Stream:
@@ -751,13 +751,13 @@ class WithBase(Type, G[T]):
 
     def parse(self, io: IO, context: Context) -> T:
         base = get_value(self.base, context)
-        with io.wrapped(RebasedFile(io.handle, base)):
-            return parse(self.type, io, context)
+        with io.wrapped(RebasedFile(io.handle, base)) as f:
+            return parse(self.type, f, context)
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         base = get_value(self.base, context)
-        with io.wrapped(RebasedFile(io.handle, base)):
-            return emit(self.type, value, io, context)
+        with io.wrapped(RebasedFile(io.handle, base)) as f:
+            return emit(self.type, value, f, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return _sizeof(self.type, value, context)
@@ -822,8 +822,8 @@ class WithSize(Type, G[T]):
         limit = max(0, get_value(self.limit, context))
 
         start = io.tell()
-        with io.wrapped(SizedFile(io.handle, limit, exact)):
-            value = parse(self.type, io, context)
+        with io.wrapped(SizedFile(io.handle, limit, exact)) as f:
+            value = parse(self.type, f, context)
 
         if exact:
             io.seek(start + limit, os.SEEK_SET)
@@ -835,8 +835,8 @@ class WithSize(Type, G[T]):
 
         start = io.tell()
         handle = SizedFile(io.handle, limit, True) if exact_write else io.handle
-        with io.wrapped(handle):
-            ret = emit(self.type, value, io, context)
+        with io.wrapped(handle) as f:
+            ret = emit(self.type, value, f, context)
 
         if exact_write:
             io.seek(start + limit, os.SEEK_SET)
