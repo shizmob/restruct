@@ -596,8 +596,11 @@ class PartialAttr(Type, G[T]):
             self.pvalues.append(value)
         return value
 
-    def get_value(self, context: Context) -> T:
-        _, value = self.values.pop()
+    def get_value(self, context: Context, peek: bool = False) -> T:
+        if peek:
+            _, value = self.values[-1]
+        else:
+            _, value = self.values.pop()
         return value
 
     def peek_value(self, context: Context, default=None) -> T:
@@ -806,33 +809,40 @@ class SizedFile:
         return getattr(self._file, n)
 
 class WithSize(Type, G[T]):
-    __slots__ = ('type', 'limit', 'exact')
+    __slots__ = ('type', 'limit', 'exact', 'exact_write')
 
-    def __init__(self, type: Type, limit: O[int] = None, exact: bool = False) -> None:
+    def __init__(self, type: Type, limit: O[int] = None, exact: bool = False, exact_write: bool = False) -> None:
         self.type = type
         self.limit = limit
         self.exact = exact
+        self.exact_write = exact_write
 
     def parse(self, io: IO, context: Context) -> T:
-        start = io.tell()
-        limit = max(0, get_value(self.limit, context))
         exact = get_value(self.exact, context)
+        limit = max(0, get_value(self.limit, context))
+
+        start = io.tell()
         with io.wrapped(SizedFile(io.handle, limit, exact)):
             value = parse(self.type, io, context)
+
         if exact:
             io.seek(start + limit, os.SEEK_SET)
         return value
 
     def emit(self, value: T, io: IO, context: Context) -> None:
+        exact_write = get_value(self.exact_write, context)
+        limit = max(0, get_value(self.limit, context, peek=True))
+
         start = io.tell()
-        limit = get_value(self.limit, context)
-        exact = get_value(self.exact, context)
-        with io.wrapped(SizedFile(io, limit, exact)):
+        handle = SizedFile(io.handle, limit, True) if exact_write else io.handle
+        with io.wrapped(handle):
             ret = emit(self.type, value, io, context)
-        if exact:
+
+        if exact_write:
             io.seek(start + limit, os.SEEK_SET)
         else:
-            set_value(self.limit, io.tell() - start, io, context)
+            limit = io.tell() - start
+        set_value(self.limit, limit, io, context)
         return ret
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
@@ -1062,7 +1072,7 @@ class Generic(Type):
             raise Error(context, 'unresolved generic')
         return default(self.stack[-1], context)
 
-    def get_value(self, context: Context) -> Any:
+    def get_value(self, context: Context, peek: bool = False) -> Any:
         return self.stack[-1]
 
     def peek_value(self, context: Context) -> Any:
@@ -1588,7 +1598,7 @@ class Switch(Type):
         else:
             return self.fallback
 
-    def peek_value(self, context) -> O[T]:
+    def peek_value(self, context: Context) -> O[T]:
         selector = self.selector
         if selector is not None:
             selector = peek_value(self.selector, context, self.default_key)
@@ -1597,7 +1607,7 @@ class Switch(Type):
         else:
             return self.fallback
 
-    def get_value(self, context) -> T:
+    def get_value(self, context: Context) -> T:
         if self.selector is not None:
             return self._get(get_value(self.selector, context))
         elif self.default_key is not None:
@@ -1849,9 +1859,9 @@ def to_type(spec: Any, ident: O[Any] = None) -> Type:
 
     raise ValueError('Could not figure out specification from argument {}.'.format(spec))
 
-def get_value(t: Type, context: Context) -> Any:
+def get_value(t: Type, context: Context, peek: bool = False) -> Any:
     if isinstance(t, (Generic, PartialAttr)):
-        return t.get_value(context)
+        return t.get_value(context, peek)
     return t
 
 def peek_value(t: Type, context: Context, default=None) -> Any:
