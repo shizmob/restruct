@@ -1181,6 +1181,9 @@ class StructType(Type):
 
         return c
 
+    def __str__(self) -> str:
+        return class_name(self.cls)
+
     def __repr__(self) -> str:
         type = 'Union' if self.union else 'Struct'
         if self.fields:
@@ -1427,8 +1430,11 @@ class Any(Type):
     def default(self, context: Context) -> O[Any]:
         return None
 
+    def __str__(self) -> str:
+        return 'Any[' + ', '.join(format_value(to_type(t, i), str) for i, t in enumerate(self.types)) + ']'
+
     def __repr__(self) -> str:
-        return '<Any[' + ', '.join(repr(to_type(t, i)) for i, t in enumerate(self.types)) + ']>'
+        return '<Any[' + ', '.join(format_value(to_type(t, i), repr) for i, t in enumerate(self.types)) + ']>'
 
 
 class Arr(Type, G[T]):
@@ -1517,6 +1523,9 @@ class Arr(Type, G[T]):
 
     def default(self, context: Context) -> Sequence[T]:
         return []
+
+    def __str__(self) -> str:
+        return str(to_type(self.type)) + (('[' + str(self.count) + ']') if self.count is not None else '[]')
 
     def __repr__(self) -> str:
         return '<{}({!r}{}{})>'.format(
