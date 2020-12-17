@@ -303,7 +303,8 @@ Standard types
 * `AlignTo(type, alignment, value?=b'\x00'):` parses and emits `type`, aligning stream to alignment bytes **after**
 * `AlignedTo(type, alignment, value?=b'\x00'):` parse and emits `type`, aligning stream to alignment bytes **before**
 * `Lazy(type, size):` parses and emits `type` lazily, returning a callable that will parse and return the type when
-* `Processed(type, parse, emit, with_context=False):` parses and emits `type`, processing them through `parse` and `emit` callables, respectively, optionally passing `context`
+* `Processed(type, parse, emit, with_context=False):` parses and emits `type`, processing it through `parse` and `emit` callables, respectively, optionally passing `context`
+* `Checked(type, check):` parses and emits `type`, calling `check(value)` and erroring if it returns `False`
 * `Mapped(type, mapping, default?=None):` parses and emits `type`, looking up the result in `mapping`
 
 License

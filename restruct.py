@@ -1023,6 +1023,38 @@ class Processed(Type, G[T, T2]):
             to_type(self.type), self.do_parse.__name__, self.do_emit.__name__
         )
 
+class Checked(Type, G[T]):
+    __slots__ = ('type', 'check')
+
+    def __init__(self, type: T, check: Callable[[T], bool]) -> None:
+        self.type = type
+        self.check = check
+
+    def parse(self, io: IO, context: Context) -> T:
+        check = get_value(self.check, context)
+        value = parse(self.type, io, context)
+        if not check(value):
+            raise Error(context, 'check failed')
+        return value
+
+    def emit(self, value: T, io: IO, context: Context) -> None:
+        check = get_value(self.check, context)
+        if not check(value):
+            raise Error(context, 'check failed')
+        return emit(self.type, value, io, context)
+
+    def sizeof(self, value: O[T], context: Context) -> O[int]:
+        check = peek_value(self.check, context)
+        if value is not None and not check(value):
+            raise Error(context, 'check failed')
+        return _sizeof(self.type, value, context)
+
+    def default(self, context: Context) -> T:
+        return default(self.type, context)
+
+    def __repr__(self) -> str:
+        return '<?{!r}: {}>'.format(self.check, repr(self.type).strip('<>'))
+
 class Mapped(Type, G[T]):
     def __new__(self, type: T, mapping: Mapping[T, T2], default: O[Any] = None) -> Processed:
         reverse = {v: k for k, v in mapping.items()}
@@ -1080,8 +1112,8 @@ class Generic(Type):
 
     def __repr__(self) -> str:
         if self.stack:
-            return '<?{}>'.format(repr(to_type(self.stack[-1])).strip('<>'))
-        return '<?unresolved>'
+            return '<${}>'.format(repr(to_type(self.stack[-1])).strip('<>'))
+        return '<$unresolved>'
 
     def __deepcopy__(self, memo: Any) -> Any:
         return self
@@ -1949,7 +1981,7 @@ __all_types__ = {
     # Base types
     Nothing, Bits, Data, Implied, Ignored, Pad, Fixed,
     # Modifier types
-    Ref, WithBase, WithSize, AlignTo, AlignedTo, Lazy, Processed, Mapped,
+    Ref, WithBase, WithSize, AlignTo, AlignedTo, Lazy, Processed, Checked, Mapped,
     # Compound types
     StructType, MetaStruct, Struct, Union, Tuple, Any, Arr, Switch, Enum,
     # Primitive types
