@@ -109,10 +109,10 @@ def max_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
 def add_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
     return process_sizes(s, lambda a, b: a + b)
 
-def floor_sizes(s: Mapping[str, U[int, float]]) -> Mapping[str, int]:
+def ceil_sizes(s: Mapping[str, U[int, float]]) -> Mapping[str, int]:
     d = {}
     for k, v in s.copy().items():
-        d[k] = int(v)
+        d[k] = math.ceil(v)
     return d
 
 
@@ -1161,7 +1161,7 @@ class StructType(Type):
                     else:
                         n = add_sizes(n, nbytes)
 
-        n = floor_sizes(n)
+        n = ceil_sizes(n)
         return n
 
     @contextmanager
@@ -1362,7 +1362,7 @@ class Tuple(Type):
             with context.enter(i, type):
                 l.append(_sizeof(type, val, context))
 
-        return floor_sizes(add_sizes(*l))
+        return ceil_sizes(add_sizes(*l))
 
     def default(self, context: Context) -> Sequence[Any]:
         value = []
@@ -1519,7 +1519,7 @@ class Arr(Type, G[T]):
                 type = to_type(self.type, count)
             l.append(_sizeof(type, stop_value, context))
 
-        return floor_sizes(add_sizes(*l))
+        return ceil_sizes(add_sizes(*l))
 
     def default(self, context: Context) -> Sequence[T]:
         return []
