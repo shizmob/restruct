@@ -173,7 +173,7 @@ class IO:
         if bits:
             nl, val = self.get_bits(n)
             if nl >= 8:
-                rounds = n // 8
+                rounds = nl // 8
                 val |= int.from_bytes(self.handle.read(rounds), byteorder='big') << (n - nl)
                 nl -= 8 * rounds
             if nl > 0:
