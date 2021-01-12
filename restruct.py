@@ -613,6 +613,9 @@ class PartialAttr(Type, G[T]):
     def peek_value(self, context: Context, default=None) -> T:
         if self.pvalues:
             return self.pvalues.pop()
+        if self.values:
+            _, value = self.values[-1]
+            return value
         return default
 
     def set_value(self, value: T, io: IO, context: Context) -> None:
