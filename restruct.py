@@ -169,7 +169,7 @@ class IO:
             return
         self.put_bits(0, 8 - self.bit_left)
 
-    def read(self, n: O[int], *, bits: bool = False) -> U[bytes, int]:
+    def read(self, n: int = -1, *, bits: bool = False) -> U[bytes, int]:
         if bits:
             nl, val = self.get_bits(n)
             if nl >= 8:
