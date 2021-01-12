@@ -786,7 +786,7 @@ class SizedFile:
         self._start = file.tell()
 
     def read(self, n: int = -1) -> bytes:
-        remaining = self._limit - self._pos
+        remaining = max(0, self._limit - self._pos)
         if n < 0:
             n = remaining
         n = min(n, remaining)
