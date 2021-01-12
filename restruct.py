@@ -2016,7 +2016,7 @@ def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> 
 
 __all_types__ = {
     # Base types
-    Nothing, Bits, Data, Implied, Ignored, Pad, Fixed,
+    Nothing, Bits, Data, Implied, Ignored, Pad, Fixed, Generic,
     # Modifier types
     Ref, WithBase, WithSize, AlignTo, AlignedTo, Lazy, Processed, Checked, Mapped,
     # Compound types
