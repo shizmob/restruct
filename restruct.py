@@ -222,6 +222,13 @@ class IO:
     def tell(self) -> int:
         return self.handle.tell()
 
+    @property
+    def root(self):
+        handle = self.handle
+        while hasattr(handle, 'root'):
+            handle = handle.root
+        return handle
+
     @contextmanager
     def wrapped(self, handle):
         self.flush()
@@ -282,7 +289,7 @@ class Context:
                     stream.offset = self.stream_offset(stream)
                     stream.pos = stream.offset
                 pos = stream.pos
-            with seeking(io, pos, reference) as f:
+            with seeking(io.root, pos, reference) as s, io.wrapped(s) as f:
                 self.stream_path.append(stream)
                 yield f
                 self.stream_path.pop()
@@ -770,7 +777,7 @@ class WithBase(Type, G[T]):
 
 class SizedFile:
     def __init__(self, file: IO, limit: int, exact: bool = False) -> None:
-        self._file = file
+        self.root = self._file = file
         self._pos = 0
         self._limit = limit
         self._start = file.tell()
