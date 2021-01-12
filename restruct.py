@@ -1133,6 +1133,10 @@ class Generic(Type):
     def __deepcopy__(self, memo: Any) -> Any:
         return self
 
+class GenericSelf(Generic):
+    def __repr__(self) -> str:
+        return '<recursion: {}>'.format(friendly_name(self.stack[-1]))
+
 class MetaSpec(collections.OrderedDict):
     def __getattr__(self, item: Any) -> Any:
         try:
@@ -1167,7 +1171,13 @@ class StructType(Type):
             raise TypeError('too many generics arguments for {}: {}'.format(
                 self.__class__.__name__, len(bound)
             ))
-        return self.__class__(self.fields, self.cls, self.generics, self.union, self.partial, bound=bound)
+
+        subtype = self.__class__(self.fields, self.cls, self.generics, self.union, self.partial, bound=bound)
+        for i, b in enumerate(subtype.bound):
+            # re-bind Self bound
+            if b is self:
+                subtype.bound[i] = subtype
+        return subtype
 
     def parse(self, io: IO, context: Context) -> Any:
         n = 0
@@ -1290,18 +1300,23 @@ class StructType(Type):
 
 class MetaStruct(type):
     @classmethod
-    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, **kwargs) -> dict:
+    def __prepare__(mcls, name: str, bases: Sequence[Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, recursive: bool = False, **kwargs) -> dict:
         attrs = collections.OrderedDict()
         attrs.update({g: Generic() for g in generics})
         attrs.update({p: Partial() for p in partials})
         if inject:
             attrs.update({c.__name__: c for c in __all_types__})
+        if recursive:
+            attrs['Self'] = GenericSelf()
         return attrs
 
-    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, **kwargs) -> Any:
+    def __new__(mcls, name: str, bases: Sequence[Any], attrs: Mapping[str, Any], generics: Sequence[str] = [], partials: Sequence[str] = [], inject: bool = True, recursive: bool = False, **kwargs) -> Any:
         # Inherit some properties from base types
         gs = []
         bound = []
+        if recursive:
+            gs.append(attrs.pop('Self'))
+
         fields = {}
         for b in bases:
             fields.update(getattr(b, '__annotations__', {}))
@@ -1324,6 +1339,8 @@ class MetaStruct(type):
 
         c = super().__new__(mcls, name, bases, attrs)
         type = StructType(fields, c, gs, bound=bound, **kwargs)
+        if recursive:
+            type.bound.insert(0, type)
         c.__restruct_type__ = type
         return c
 
@@ -1334,7 +1351,7 @@ class MetaStruct(type):
         if not isinstance(ty, tuple):
             ty = (ty,)
         subtype = cls.__restruct_type__[ty]
-        new_name = '{}[{}]'.format(cls.__name__, ', '.join(friendly_name(r).strip('<>') for r in subtype.bound))
+        new_name = '{}[{}]'.format(cls.__name__, ', '.join(friendly_name(r).strip('<>') for r in subtype.bound if r is not subtype))
         new = type(new_name, (cls,), cls.__class__.__prepare__(new_name, (cls,)))
         new.__restruct_type__ = subtype
         new.__slots__ = cls.__slots__
