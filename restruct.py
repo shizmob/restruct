@@ -570,58 +570,57 @@ class Enum(Type, G[E_co, T]):
 ## Modifier types
 
 class PartialAttr(Type, G[T]):
-    __slots__ = ('parent', 'name', 'type', 'values', 'pvalues')
 
     def __init__(self, parent: 'Partial', name: str) -> None:
-        self.parent = parent
-        self.name = name
-        self.type = None
-        self.values = []
-        self.pvalues = []
+        self._parent = parent
+        self._name = name
+        self._type = None
+        self._values = []
+        self._pvalues = []
 
     def parse(self, io: IO, context: Context) -> T:
         offset = io.tell()
-        value = parse(self.type, io, context)
-        for _ in self.parent.types:
-            self.values.append((offset, value))
+        value = parse(self._type, io, context)
+        for _ in self._parent.types:
+            self._values.append((offset, value))
         return value
 
     def emit(self, value: T, io: IO, context: Context) -> None:
         offset = io.tell()
-        for _ in self.parent.types:
-            self.values.append((offset, value))
-        emit(self.type, value, io, context)
+        for _ in self._parent.types:
+            self._values.append((offset, value))
+        emit(self._type, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
-        for _ in self.parent.types:
-            self.pvalues.append(value)
-        return _sizeof(self.type, value, context)
+        for _ in self._parent.types:
+            self._pvalues.append(value)
+        return _sizeof(self._type, value, context)
 
     def default(self, context: Context) -> T:
-        value = default(self.type, context)
-        for _ in self.parent.types:
-            self.pvalues.append(value)
+        value = default(self._type, context)
+        for _ in self._parent.types:
+            self._pvalues.append(value)
         return value
 
     def get_value(self, context: Context, peek: bool = False) -> T:
         if peek:
-            _, value = self.values[-1]
+            _, value = self._values[-1]
         else:
-            _, value = self.values.pop()
+            _, value = self._values.pop()
         return value
 
     def peek_value(self, context: Context, default=None) -> T:
-        if self.pvalues:
-            return self.pvalues.pop()
-        if self.values:
-            _, value = self.values[-1]
+        if self._pvalues:
+            return self._pvalues.pop()
+        if self._values:
+            _, value = self._values[-1]
             return value
         return default
 
     def set_value(self, value: T, io: IO, context: Context) -> None:
-        offset, _ = self.values.pop()
+        offset, _ = self._values.pop()
         with seeking(io, offset, os.SEEK_SET) as f:
-            emit(self.type, value, f, context)
+            emit(self._type, value, f, context)
 
     def __matmul__(self, type: Any) -> Type:
         if isinstance(type, self.__class__):
@@ -633,12 +632,17 @@ class PartialAttr(Type, G[T]):
             return self(type)
         return NotImplemented
 
+    def __setattr__(self, n, v):
+        if not n.startswith('_'):
+            return setattr(self._type, n, v)
+        return super().__setattr__(n, v)
+
     def __call__(self, type: Type) -> Type:
-        self.type = type
+        self._type = type
         return self
 
     def __repr__(self) -> str:
-        return '</.{}: {}>'.format(self.name, repr(self.type).strip('<>'))
+        return '</.{}: {}>'.format(self._name, repr(self._type).strip('<>'))
 
 class Partial:
     __slots__ = ('types', 'attrs')
