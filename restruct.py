@@ -1708,7 +1708,7 @@ class Switch(Type):
 class Int(Type):
     __slots__ = ('bits', 'signed', 'order')
 
-    def __init__(self, bits: int, order: str = 'le', signed: bool = True) -> None:
+    def __init__(self, bits: O[int] = None, order: str = 'le', signed: bool = True) -> None:
         self.bits = bits
         self.signed = signed
         self.order = order
@@ -1717,15 +1717,20 @@ class Int(Type):
         bits = get_value(self.bits, context)
         order = get_value(self.order, context)
         signed = get_value(self.signed, context)
-        bs = io.read(bits // 8)
-        if len(bs) != bits // 8:
-            raise ValueError('short read')
+        if bits is not None:
+            bs = io.read(bits // 8)
+            if len(bs) != bits // 8:
+                raise ValueError('short read')
+        else:
+            bs = io.read()
         return int.from_bytes(bs, byteorder='little' if order == 'le' else 'big', signed=signed)
 
     def emit(self, value: int, io: IO, context: Context) -> None:
         bits = get_value(self.bits, context)
         order = get_value(self.order, context)
         signed = get_value(self.signed, context)
+        if bits is None:
+            bits = 8 * math.ceil(value.bit_length() // 8)
         bs = value.to_bytes(bits // 8, byteorder='little' if order == 'le' else 'big', signed=signed)
         io.write(bs)
 
