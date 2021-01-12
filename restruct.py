@@ -371,7 +371,7 @@ class Nothing(Type):
 class Implied(Type):
     __slots__ = ('value',)
 
-    def __init__(self, value: Any) -> None:
+    def __init__(self, value: Any = None) -> None:
         self.value = value
 
     def parse(self, io: IO, context: Context) -> Any:
