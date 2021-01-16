@@ -423,17 +423,26 @@ class Ignored(Type, G[T]):
         )
 
 class Bits(Type):
-    __slots__ = ('size',)
+    __slots__ = ('size', 'byteswap')
 
-    def __init__(self, size: O[int] = None) -> None:
+    def __init__(self, size: O[int] = None, byteswap: bool = False) -> None:
         self.size = size
+        self.byteswap = byteswap
 
     def parse(self, io: IO, context: Context) -> int:
         size = get_value(self.size, context)
-        return io.read(size, bits=True)
+        value = io.read(size, bits=True)
+        if get_value(self.byteswap, context):
+            value <<= (8 - (size % 8)) % 8
+            v = value.to_bytes(math.ceil(size / 8), byteorder='big')
+            value = int.from_bytes(v, byteorder='little')
+        return value
 
     def emit(self, value: int, io: IO, context: Context) -> None:
         size = get_value(self.size, context)
+        if get_value(self.byteswap, context):
+            value = int.from_bytes(value.to_bytes(math.ceil(size / 8), byteorder='big'), byteorder='little')
+            value >>= (8 - (size % 8)) % 8
         io.write(value, bits=size)
 
     def sizeof(self, value: O[int], context: Context) -> O[int]:
