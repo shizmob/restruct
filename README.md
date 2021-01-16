@@ -298,8 +298,8 @@ Standard types
 ---
 
 * `Ref(type, point, reference=os.SEEK_SET, adjustment=0, stream=None)`: parses and emits a value of `type` elsewhere in the stream at offset `point`
-* `WithBase(type, base=None):` parses and emits `type`, shifting the input position for absolute `Ref` references to `base` (default: file position on parse/emit time)
-* `WithSize(type, limit=None, exact=False):` parses and emits `type`, limiting its size in the tream to `limit` bytes
+* `Rebased(type, base=None):` parses and emits `type`, shifting the input position for absolute `Ref` references to `base` (default: file position on parse/emit time)
+* `Sized(type, limit=None, exact=False):` parses and emits `type`, limiting its size in the tream to `limit` bytes
 * `AlignTo(type, alignment, value?=b'\x00'):` parses and emits `type`, aligning stream to alignment bytes **after**
 * `AlignedTo(type, alignment, value?=b'\x00'):` parse and emits `type`, aligning stream to alignment bytes **before**
 * `Lazy(type, size):` parses and emits `type` lazily, returning a callable that will parse and return the type when

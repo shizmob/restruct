@@ -134,40 +134,49 @@ class BitAlignment(enum.Enum):
     Yes = enum.auto()
 
 class IO:
-    __slots__ = ('handle', 'bit_left', 'bit_val', 'bit_align')
+    __slots__ = ('handle', 'bit_count', 'bit_val', 'bit_align')
 
     def __init__(self, handle, bit_align = BitAlignment.No) -> None:
         self.handle = handle
-        self.bit_left = 0
+        self.bit_count = 8
         self.bit_val = None
         self.bit_align = bit_align
 
     def get_bits(self, n: int) -> TU[int, int]:
-        if n > 0 and self.bit_left == 0:
+        if n > 0 and self.bit_count == 8:
             self.bit_val = self.handle.read(1)[0]
-            self.bit_left = 8
-        nb = min(n, self.bit_left)
-        val = self.bit_val & ((1 << nb) - 1)
-        self.bit_val >>= nb
-        self.bit_left -= nb
+            self.bit_count = 0
+        nb = min(n, 8 - self.bit_count)
+        val = (self.bit_val >> self.bit_count) & ((1 << nb) - 1)
+        self.bit_count += nb
         return n - nb, val
 
     def put_bits(self, val: int, n: int) -> TU[int, int]:
-        if n > 0 and self.bit_left == 0:
-            self.bit_left = 8
+        if n > 0 and self.bit_count == 8:
+            self.bit_count = 0
             self.bit_val = 0
-        nb = min(n, self.bit_left)
-        self.bit_val |= (val & ((1 << nb) - 1)) << (8 - self.bit_left)
-        self.bit_left -= nb
-        if nb > 0 and self.bit_left == 0:
+        nb = min(n, 8 - self.bit_count)
+
+        self.bit_val |= ((val >> (n - nb)) & ((1 << nb) - 1)) << self.bit_count
+        self.bit_count += nb
+        if nb > 0 and self.bit_count == 8:
             self.handle.write(bytes([self.bit_val]))
             self.bit_val = None
-        return n - nb, (val >> nb)
+        return n - nb, val & ((1 << (n - nb)) - 1)
 
-    def flush_bits(self):
-        if self.bits_left == 0:
+    def flush_bits(self, partial=False):
+        if self.bit_count == 8:
             return
-        self.put_bits(0, 8 - self.bit_left)
+        if partial:
+            b = self.handle.read(1)
+            if b:
+                b = b[0]
+                self.handle.seek(-1, os.SEEK_CUR)
+            else:
+                b = 0
+            self.put_bits(b >> (8 - self.bit_count), 8 - self.bit_count)
+        else:
+            self.put_bits(0, 8 - self.bit_count)
 
     def read(self, n: int = -1, *, bits: bool = False) -> U[bytes, int]:
         if bits:
@@ -181,13 +190,13 @@ class IO:
                 _, v = self.get_bits(nl)
                 val |= v
             return val
-        if self.bit_left > 0:
+        if self.bit_count < 8:
             if self.bit_align == BitAlignment.No:
                 raise ValueError('misaligned read')
             elif self.bit_align == BitAlignment.Yes:
                 return self.read(n * 8, bits=True)
             elif self.bit_align == BitAlignment.Fill:
-                self.bit_left = 0
+                self.bit_count = 8
                 self.bit_val = None
         return self.handle.read(n)
 
@@ -203,7 +212,7 @@ class IO:
             if n > 0:
                 self.put_bits(b, n)
             return
-        if self.bit_left > 0:
+        if self.bit_count < 8:
             if self.bit_align == BitAlignment.No:
                 raise ValueError('misaligned write')
             elif self.bit_align == BitAlignment.Yes:
@@ -218,10 +227,20 @@ class IO:
         return self.handle.flush()
 
     def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
+        if self.bit_count < 8:
+            self.flush_bits(partial=True)
+            n -= 1
+        if isinstance(n, float):
+            bp = math.round((n * 10)) % 10
+            n = int(n)
+            self.get_bits(8 - bp)
         return self.handle.seek(n, whence)
 
     def tell(self) -> int:
-        return self.handle.tell()
+        p = self.handle.tell()
+        if self.bit_count < 8:
+            p += self.bit_count / 10
+        return p
 
     @property
     def root(self):
