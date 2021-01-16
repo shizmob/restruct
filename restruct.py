@@ -171,14 +171,15 @@ class IO:
 
     def read(self, n: int = -1, *, bits: bool = False) -> U[bytes, int]:
         if bits:
-            nl, val = self.get_bits(n)
+            nl, v = self.get_bits(n)
+            val = v << nl
             if nl >= 8:
                 rounds = nl // 8
-                val |= int.from_bytes(self.handle.read(rounds), byteorder='big') << (n - nl)
                 nl -= 8 * rounds
+                val |= int.from_bytes(self.handle.read(rounds), byteorder='big') << nl
             if nl > 0:
                 _, v = self.get_bits(nl)
-                val |= v << (n - nl)
+                val |= v
             return val
         if self.bit_left > 0:
             if self.bit_align == BitAlignment.No:
