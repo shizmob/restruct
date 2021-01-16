@@ -766,7 +766,7 @@ class RebasedFile:
     def __getattr__(self, n: str) -> Any:
         return getattr(self._file, n)
 
-class WithBase(Type, G[T]):
+class Rebased(Type, G[T]):
     __slots__ = ('type', 'base')
 
     def __init__(self, type: Type, base: O[int] = None):
@@ -832,7 +832,7 @@ class SizedFile:
     def __getattr__(self, n: str) -> Any:
         return getattr(self._file, n)
 
-class WithSize(Type, G[T]):
+class Sized(Type, G[T]):
     __slots__ = ('type', 'limit', 'exact', 'exact_write')
 
     def __init__(self, type: Type, limit: O[int] = None, exact: bool = False, exact_write: bool = False) -> None:
@@ -2028,7 +2028,7 @@ __all_types__ = {
     # Base types
     Nothing, Bits, Data, Implied, Ignored, Pad, Fixed, Generic,
     # Modifier types
-    Ref, WithBase, WithSize, AlignTo, AlignedTo, Lazy, Processed, Checked, Mapped,
+    Ref, Rebased, Sized, AlignTo, AlignedTo, Lazy, Processed, Checked, Mapped,
     # Compound types
     StructType, MetaStruct, Struct, Union, Tuple, Any, Arr, Switch, Enum,
     # Primitive types
