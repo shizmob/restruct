@@ -134,49 +134,60 @@ class BitAlignment(enum.Enum):
     Yes = enum.auto()
 
 class IO:
-    __slots__ = ('handle', 'bit_count', 'bit_val', 'bit_align')
+    __slots__ = ('handle', 'bit_count', 'bit_val', 'bit_align', 'bit_wr')
 
     def __init__(self, handle, bit_align = BitAlignment.No) -> None:
         self.handle = handle
         self.bit_count = 8
         self.bit_val = None
         self.bit_align = bit_align
+        self.bit_wr = False
 
     def get_bits(self, n: int) -> TU[int, int]:
-        if n > 0 and self.bit_count == 8:
+        if n <= 0:
+            return 0, 0
+
+        if self.bit_count == 8:
             self.bit_val = self.handle.read(1)[0]
             self.bit_count = 0
         nb = min(n, 8 - self.bit_count)
+
         val = (self.bit_val >> self.bit_count) & ((1 << nb) - 1)
         self.bit_count += nb
+
+        if nb > 0 and self.bit_count == 8 and self.bit_wr:
+            self.flush_bits()
         return n - nb, val
 
     def put_bits(self, val: int, n: int) -> TU[int, int]:
-        if n > 0 and self.bit_count == 8:
+        if n <= 0:
+            return 0, 0
+
+        if self.bit_count == 8:
+            bv = self.handle.read(1)
+            if bv:
+                self.bit_val = bv[0]
+            else:
+                self.bit_val = 0
+                self.handle.write(bytes([0]))
             self.bit_count = 0
-            self.bit_val = 0
         nb = min(n, 8 - self.bit_count)
 
+        self.bit_val &= ~(((1 << nb) - 1) << self.bit_count)
         self.bit_val |= ((val >> (n - nb)) & ((1 << nb) - 1)) << self.bit_count
+        self.bit_wr = True
         self.bit_count += nb
+
         if nb > 0 and self.bit_count == 8:
-            self.handle.write(bytes([self.bit_val]))
-            self.bit_val = None
+            self.flush_bits()
         return n - nb, val & ((1 << (n - nb)) - 1)
 
-    def flush_bits(self, partial=False):
-        if self.bit_count == 8:
-            return
-        if partial:
-            b = self.handle.read(1)
-            if b:
-                b = b[0]
-                self.handle.seek(-1, os.SEEK_CUR)
-            else:
-                b = 0
-            self.put_bits(b >> (8 - self.bit_count), 8 - self.bit_count)
-        else:
-            self.put_bits(0, 8 - self.bit_count)
+    def flush_bits(self):
+        self.handle.seek(-1, os.SEEK_CUR)
+        self.handle.write(bytes([self.bit_val]))
+        self.bit_val = None
+        self.bit_wr = False
+        self.bit_count = 8
 
     def read(self, n: int = -1, *, bits: bool = False) -> U[bytes, int]:
         if bits:
@@ -206,8 +217,8 @@ class IO:
             if n > 8:
                 rounds = n // 8
                 shift = 8 * rounds
-                self.handle.write((b & ((1 << shift) - 1)).to_bytes(rounds, byteorder='big'))
-                b >>= shift
+                self.handle.write(((b >> (n - shift)) & ((1 << shift) - 1)).to_bytes(rounds, byteorder='big'))
+                b &= (1 << (n - shift)) - 1
                 n -= shift
             if n > 0:
                 self.put_bits(b, n)
@@ -222,24 +233,28 @@ class IO:
         return self.handle.write(b)
 
     def flush(self):
-        if self.bit_align == BitAlignment.Fill:
+        if self.bit_align == BitAlignment.Fill and self.bit_count < 8:
             self.flush_bits()
         return self.handle.flush()
 
     def seek(self, n: int, whence: int = os.SEEK_SET) -> None:
         if self.bit_count < 8:
-            self.flush_bits(partial=True)
-            n -= 1
+            self.flush_bits()
+
         if isinstance(n, float):
-            bp = math.round((n * 10)) % 10
+            bp = int((n % 1) * 8)
             n = int(n)
+        else:
+            bp = 0
+        self.handle.seek(n, whence)
+        if bp:
             self.get_bits(8 - bp)
-        return self.handle.seek(n, whence)
 
     def tell(self) -> int:
         p = self.handle.tell()
         if self.bit_count < 8:
-            p += self.bit_count / 10
+            p -= 1
+            p += self.bit_count / 8
         return p
 
     @property
