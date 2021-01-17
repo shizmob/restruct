@@ -1872,7 +1872,11 @@ class Str(Type):
                     break
                 c = io.read(length_unit)
                 read_length += 1
-                if not c or (type == 'c' and c == terminator):
+                if not c:
+                    if type == 'raw':
+                        break
+                    raise ValueError('expected terminator')
+                if type == 'c' and c == terminator:
                     break
                 raw.extend(c)
 
