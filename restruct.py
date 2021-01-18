@@ -1591,18 +1591,20 @@ class Any(Type):
 
 
 class Arr(Type, G[T]):
-    __slots__ = ('type', 'count', 'stop_value')
+    __slots__ = ('type', 'count', 'stop_value', 'separator')
 
-    def __init__(self, type: T, count: O[int] = None, stop_value: O[Any] = None) -> None:
+    def __init__(self, type: T, count: O[int] = None, stop_value: O[Any] = None, separator: O[bytes] = None) -> None:
         self.type = type
         self.count = count
         self.stop_value = stop_value
+        self.separator = separator
 
     def parse(self, io: IO, context: Context) -> Sequence[T]:
         value = []
 
         count = get_value(self.count, context)
         stop_value = get_value(self.stop_value, context)
+        separator = get_value(self.separator, context)
 
         i = 0
         while count is None or i < count:
@@ -1612,17 +1614,32 @@ class Arr(Type, G[T]):
                 type = to_type(self.type, i)
 
             with context.enter(i, type):
+                eof = False
                 pos = io.tell()
+                if separator:
+                    data = b''
+                    while True:
+                        b = io.read(1)
+                        if not b:
+                            eof = True
+                            break
+                        data += b
+                        if data[-len(separator):] == separator:
+                            data = data[:-len(separator)]
+                            break
+                    eio = data
+                else:
+                    eio = io
                 try:
-                    elem = parse(type, io, context)
+                    elem = parse(type, eio, context)
                 except Exception:
                     # Check EOF.
-                    if io.tell() == pos and not io.read(1):
+                    if not eio or (io.tell() == pos and not io.read(1)):
                         break
                     io.seek(-1, os.SEEK_CUR)
                     raise
 
-                if elem == stop_value:
+                if eof or elem == stop_value:
                     break
             
             value.append(elem)
@@ -1633,6 +1650,7 @@ class Arr(Type, G[T]):
     def emit(self, value: Sequence[T], io: IO, context: Context) -> None:
         set_value(self.count, len(value), io, context)
         stop_value = get_value(self.stop_value, context)
+        separator = get_value(self.separator, context)
 
         if stop_value is not None:
             value = value + [stop_value]
@@ -1646,6 +1664,8 @@ class Arr(Type, G[T]):
 
             with context.enter(i, type):
                 emit(type, elem, io, context)
+                if separator and i < len(value) - 1:
+                    io.write(separator)
 
     def sizeof(self, value: O[Sequence[T]], context: Context) -> int:
         if value is None:
@@ -1653,6 +1673,7 @@ class Arr(Type, G[T]):
         else:
             count = len(value)
         stop_value = peek_value(self.stop_value, context)
+        separator = peek_value(self.separator, context)
 
         if count is None:
             return None
@@ -1671,6 +1692,9 @@ class Arr(Type, G[T]):
             else:
                 type = to_type(self.type, count)
             l.append(_sizeof(type, stop_value, context))
+
+        if separator:
+            l.append(to_size((count - 1) * len(separator), context))
 
         return ceil_sizes(add_sizes(*l))
 
