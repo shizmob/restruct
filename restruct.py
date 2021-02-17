@@ -1104,18 +1104,18 @@ class Processed(Type, G[T, T2]):
     def sizeof(self, value: O[T2], context: Context) -> O[int]:
         if value is not None:
             if peek_value(self.with_context, context):
-                raw = self.do_emit(value, context)
+                value = self.do_emit(value, context)
             else:
-                raw = self.do_emit(value)
-        return _sizeof(self.type, raw, context)
+                value = self.do_emit(value)
+        return _sizeof(self.type, value, context)
 
     def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
         if value is not None:
             if peek_value(self.with_context, context):
-                raw = self.do_emit(value, context)
+                value = self.do_emit(value, context)
             else:
-                raw = self.do_emit(value)
-        return _offsetof(self.type, path, raw, context)
+                value = self.do_emit(value)
+        return _offsetof(self.type, path, value, context)
 
     def default(self, context: Context) -> T:
         value = default(self.type, context)
