@@ -112,7 +112,8 @@ def add_sizes(*s: Mapping[str, int]) -> Mapping[str, int]:
 def ceil_sizes(s: Mapping[str, U[int, float]]) -> Mapping[str, int]:
     d = {}
     for k, v in s.copy().items():
-        d[k] = math.ceil(v)
+        if v is not None:
+            d[k] = math.ceil(v)
     return d
 
 
