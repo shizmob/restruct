@@ -401,9 +401,6 @@ class Nothing(Type):
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return 0
 
-    def offsetof(self, path: Sequence[U[int, str]], value: O[None], context: Context) -> O[int]:
-        return 0
-
     def default(self, context: Context) -> None:
         return None
     
@@ -423,9 +420,6 @@ class Implied(Type):
         pass
 
     def sizeof(self, value: O[Any], context: Context) -> int:
-        return 0
-
-    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
         return 0
 
     def default(self, context: Context) -> Any:
@@ -498,9 +492,6 @@ class Bits(Type):
     def sizeof(self, value: O[int], context: Context) -> O[int]:
         return peek_value(self.size, context) / 8
 
-    def offsetof(self, path: Sequence[U[int, str]], value: O[int], context: Context) -> O[int]:
-        return 0
-
     def default(self, context: Context) -> int:
         return 0
 
@@ -535,9 +526,6 @@ class Data(Type):
         if value is not None:
             return len(value)
         return peek_value(self.size, context)
-
-    def offsetof(self, path: Sequence[U[int, str]], value: O[bytes], context: Context) -> O[int]:
-        return 0
 
     def default(self, context: Context) -> bytes:
         return b'\x00' * (peek_value(self.size, context) or 0)
@@ -584,9 +572,6 @@ class Fixed(Type, G[T]):
         else:
             type = to_type(self.type)
         return _sizeof(type, value, context)
-
-    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
-        return 0
 
     def default(self, context: Context) -> Any:
         return peek_value(self.pattern, context)
@@ -1983,9 +1968,6 @@ class Int(Type):
             return None
         return bits // 8
 
-    def offsetof(self, path: Sequence[U[int, str]], value: O[int], context: Context) -> O[int]:
-        return 0
-
     def default(self, context: Context) -> int:
         return 0
 
@@ -2031,9 +2013,6 @@ class Float(Type):
         if bits is None:
             return None
         return bits // 8
-
-    def offsetof(self, path: Sequence[U[int, str]], value: O[float], context: Context) -> O[int]:
-        return 0
 
     def default(self, context: Context) -> float:
         return 0.0
@@ -2149,7 +2128,31 @@ class Str(Type):
         return l
 
     def offsetof(self, path: Sequence[U[int, str]], value: O[str], context: Context) -> O[int]:
-        return 0
+        idx, fpath = path[0], path[1:]
+        if not isinstance(idx, int):
+            raise ValueError('not a sequence index: {}'.format(idx))
+
+        length = peek_value(self.length, context)
+        length_unit = peek_value(self.length_unit, context)
+        type = peek_value(self.type, context)
+        exact = peek_value(self.exact, context)
+        encoding = peek_value(self.encoding,  context)
+        terminator = peek_value(self.terminator, context)
+
+        if type == 'pascal':
+            if exact and length is not None:
+                l = length * length_unit
+            elif value is not None:
+                l = len(value.encode(encoding))
+                if type == 'c':
+                    l += len(terminator)
+            else:
+                l = None
+            off = _sizeof(self.length_type, l, context)
+        else:
+            off = {}
+
+        return add_sizes(to_size(idx * length_unit, context), off)
 
     def default(self, context: Context) -> str:
         return ''
@@ -2275,7 +2278,10 @@ def offsetof(spec: Any, path: Sequence[U[int, str]], value: O[Any] = None, conte
     else:
         stream = ctx.params.streams[stream]
 
-    return ctx.stream_offset(stream) + offsets.get(stream.name, 0)
+    off = offsets.get(stream.name, 0)
+    if off is None:
+        return None
+    return ctx.stream_offset(stream) + off
 
 def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> O[Any]:
     type = to_type(spec)
