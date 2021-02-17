@@ -374,6 +374,9 @@ class Type:
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
         return None
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
+        return None
+
     def default(self, context: Context) -> O[Any]:
         return None
 
@@ -398,6 +401,9 @@ class Nothing(Type):
     def sizeof(self, value: O[None], context: Context) -> O[int]:
         return 0
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[None], context: Context) -> O[int]:
+        return 0
+
     def default(self, context: Context) -> None:
         return None
     
@@ -417,6 +423,9 @@ class Implied(Type):
         pass
 
     def sizeof(self, value: O[Any], context: Context) -> int:
+        return 0
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
         return 0
 
     def default(self, context: Context) -> Any:
@@ -447,6 +456,12 @@ class Ignored(Type, G[T]):
         if value is None:
             value = default(self.type, context)
         return _sizeof(self.type, value, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[None], context: Context) -> O[int]:
+        value = peek_value(self.value, context)
+        if value is None:
+            value = default(self.type, context)
+        return _offsetof(self.type, path, value, context)
 
     def default(self, context: Context) -> Any:
         return None
@@ -483,6 +498,9 @@ class Bits(Type):
     def sizeof(self, value: O[int], context: Context) -> O[int]:
         return peek_value(self.size, context) / 8
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[int], context: Context) -> O[int]:
+        return 0
+
     def default(self, context: Context) -> int:
         return 0
 
@@ -517,6 +535,9 @@ class Data(Type):
         if value is not None:
             return len(value)
         return peek_value(self.size, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[bytes], context: Context) -> O[int]:
+        return 0
 
     def default(self, context: Context) -> bytes:
         return b'\x00' * (peek_value(self.size, context) or 0)
@@ -564,6 +585,9 @@ class Fixed(Type, G[T]):
             type = to_type(self.type)
         return _sizeof(type, value, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
+        return 0
+
     def default(self, context: Context) -> Any:
         return peek_value(self.pattern, context)
 
@@ -604,6 +628,11 @@ class Enum(Type, G[E_co, T]):
             value = value.value
         return _sizeof(self.type, value, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[U[E_co, T]], context: Context) -> O[int]:
+        if value is not None and isinstance(value, self.cls):
+            value = value.value
+        return _offsetof(self.type, path, value, context)
+
     def default(self, context: Context) -> U[E_co, T]:
         return next(iter(self.cls.__members__.values()))
 
@@ -640,6 +669,11 @@ class PartialAttr(Type, G[T]):
         for _ in self._parent.types:
             self._pvalues.append(value)
         return _sizeof(self._type, value, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        for _ in self._parent.types:
+            self._pvalues.append(value)
+        return _offsetof(self.type, path, value, context)
 
     def default(self, context: Context) -> T:
         value = default(self._type, context)
@@ -775,6 +809,10 @@ class Ref(Type, G[T]):
         with context.enter_stream(self.stream):
             return _sizeof(self.type, value, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        with context.enter_stream(self.stream):
+            return _offsetof(self.type, path, value, context)
+
     def default(self, context: Context) -> T:
         return default(self.type, context)
 
@@ -820,6 +858,9 @@ class Rebased(Type, G[T]):
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return _sizeof(self.type, value, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        return _offsetof(self.type, path, value, context)
 
     def default(self, context: Context) -> T:
         return default(self.type, context)
@@ -915,6 +956,9 @@ class Sized(Type, G[T]):
             return size
         return min_sizes(*[size, to_size(limit, context)])
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        return _offsetof(self.type, path, value, context)
+
     def default(self, context: Context) -> T:
         return default(self.type, context)
 
@@ -945,6 +989,9 @@ class AlignTo(Type, G[T]):
     def sizeof(self, value: O[T], context: Context) -> O[int]:
         return None # TODO
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        return _offsetof(self.type, path, value, context)
+
     def default(self, context: Context) -> T:
         return default(self.type, context)
 
@@ -973,6 +1020,9 @@ class AlignedTo(Type, G[T]):
         emit(self.child, value, io, context)
 
     def sizeof(self, value: O[T], context: Context) -> O[int]:
+        return None # TODO
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
         return None # TODO
 
     def default(self, context: Context) -> T:
@@ -1029,6 +1079,11 @@ class Lazy(Type, G[T]):
             value = value()
         return _sizeof(self.type, value, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        if value is not None:
+            value = value()
+        return _offsetof(self.type, path, value, context)
+
     def default(self, context: Context) -> T:
         return default(self.type, context)
 
@@ -1069,6 +1124,14 @@ class Processed(Type, G[T, T2]):
                 raw = self.do_emit(value)
         return _sizeof(self.type, raw, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        if value is not None:
+            if peek_value(self.with_context, context):
+                raw = self.do_emit(value, context)
+            else:
+                raw = self.do_emit(value)
+        return _offsetof(self.type, path, raw, context)
+
     def default(self, context: Context) -> T:
         value = default(self.type, context)
         if peek_value(self.with_context, context):
@@ -1108,6 +1171,12 @@ class Checked(Type, G[T]):
         if value is not None and not check(value):
             raise Error(context, self.message.format(value))
         return _sizeof(self.type, value, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        check = peek_value(self.check, context)
+        if value is not None and not check(value):
+            raise Error(context, self.message.format(value))
+        return _offsetof(self.type, path, value, context)
 
     def default(self, context: Context) -> T:
         return default(self.type, context)
@@ -1158,6 +1227,11 @@ class Generic(Type):
         if not self.stack:
             return None
         return _sizeof(self.stack[-1], value, context)
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        if not self.stack:
+            return None
+        return _offsetof(self.type, path, self.stack[-1], context)
 
     def default(self, context: Context) -> Any:
         if not self.stack:
@@ -1299,16 +1373,38 @@ class StructType(Type):
                         field = None
 
                     nbytes = _sizeof(type, field, context)
-                    if nbytes is None:
-                        n = None
-                        break
-
                     if self.union:
                         n = max_sizes(n, nbytes)
                     else:
                         n = add_sizes(n, nbytes)
 
         n = ceil_sizes(n)
+        return n
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
+        n = {}
+
+        fname, fpath = path[0], path[1:]
+        if fname not in self.fields:
+            raise ValueError('unknown field: {}'.format(fname))
+
+        with self.enter():
+            for name, type in self.fields.items():
+                with context.enter(name, type):
+                    if value:
+                        field = getattr(value, name)
+                    else:
+                        field = None
+
+                    if fname == name:
+                        offset = _offsetof(type, fpath, field, context)
+                        n = add_sizes(n, offset)
+                        break
+
+                    if not self.union:
+                        nbytes = _sizeof(type, field, context)
+                        n = add_sizes(n, nbytes)
+
         return n
 
     @contextmanager
@@ -1514,7 +1610,32 @@ class Tuple(Type):
         for i, (type, val) in enumerate(zip(self.types, value)):
             type = to_type(type, i)
             with context.enter(i, type):
-                l.append(_sizeof(type, val, context))
+                size = _sizeof(type, val, context)
+                l.append(size)
+
+        return ceil_sizes(add_sizes(*l))
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        idx, fpath = path[0], path[1:]
+        if not isinstance(idx, int):
+            raise ValueError('not a sequence index: {}'.format(idx))
+        if idx >= len(self.types):
+            raise ValueError('sequence index out of bounds: {}'.format(idx))
+
+        l = []
+        if value is None:
+            value = [None] * len(self.types)
+
+        for i, (type, val) in enumerate(zip(self.types, value)):
+            type = to_type(type, i)
+            with context.enter(i, type):
+                if i == idx:
+                    offset = _offsetof(type, fpath, val, context)
+                    l.append(offset)
+                    break
+                else:
+                    size = _sizeof(type, val, context)
+                    l.append(size)
 
         return ceil_sizes(add_sizes(*l))
 
@@ -1579,6 +1700,9 @@ class Any(Type):
         ))
 
     def sizeof(self, value: O[Any], context: Context) -> O[int]:
+        return None
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
         return None
 
     def default(self, context: Context) -> O[Any]:
@@ -1685,17 +1809,61 @@ class Arr(Type, G[T]):
                 type = to_type(self.type[i], i)
             else:
                 type = to_type(self.type, i)
-            l.append(_sizeof(type, value[i] if value is not None else None, context))
+            if value is not None:
+                val = value[i]
+            else:
+                val = None
+            size = _sizeof(type, val, context)
+            l.append(size)
 
         if stop_value is not None:
             if isinstance(self.type, list):
                 type = to_type(self.type[count], count)
             else:
                 type = to_type(self.type, count)
-            l.append(_sizeof(type, stop_value, context))
+            size = _sizeof(type, stop_value, context)
+            l.append(size)
 
         if separator:
             l.append(to_size((count - 1) * len(separator), context))
+
+        return ceil_sizes(add_sizes(*l))
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[T], context: Context) -> O[int]:
+        idx, fpath = path[0], path[1:]
+        if not isinstance(idx, int):
+            raise ValueError('not a sequence index: {}'.format(idx))
+
+        if value is None:
+            count = peek_value(self.count, context)
+        else:
+            count = len(value)
+        stop_value = peek_value(self.stop_value, context)
+        separator = peek_value(self.separator, context)
+
+        if count is not None and idx >= count:
+            raise ValueError('sequence index out of bounds: {}'.format(idx))
+
+        l = []
+        for i in range(idx + 1):
+            if isinstance(self.type, list):
+                type = to_type(self.type[i], i)
+            else:
+                type = to_type(self.type, i)
+            if value is not None:
+                val = value[i]
+            else:
+                val = None
+            if idx == i:
+                offset = _offsetof(type, fpath, val, context)
+                l.append(offset)
+                break
+            else:
+                size = _sizeof(type, val, context)
+                l.append(size)
+
+        if separator:
+            l.append(to_size((idx - 1) * len(separator), context))
 
         return ceil_sizes(add_sizes(*l))
 
@@ -1762,6 +1930,12 @@ class Switch(Type):
             return None
         return _sizeof(type, value, context)
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[Any], context: Context) -> O[int]:
+        type = self.peek_value(context)
+        if type is None:
+            return None
+        return _offsetof(type, path, value, context)
+
     def default(self, context: Context) -> O[Any]:
         type = self.peek_value(context)
         if type is None:
@@ -1809,6 +1983,9 @@ class Int(Type):
             return None
         return bits // 8
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[int], context: Context) -> O[int]:
+        return 0
+
     def default(self, context: Context) -> int:
         return 0
 
@@ -1849,11 +2026,14 @@ class Float(Type):
         bs = struct.pack(self.FORMATS[bits], value)
         io.write(bs)
 
-    def sizeof(self, value: O[int], context: Context) -> int:
+    def sizeof(self, value: O[float], context: Context) -> int:
         bits = peek_value(self.bits, context)
         if bits is None:
             return None
         return bits // 8
+
+    def offsetof(self, path: Sequence[U[int, str]], value: O[float], context: Context) -> O[int]:
+        return 0
 
     def default(self, context: Context) -> float:
         return 0.0
@@ -1968,6 +2148,9 @@ class Str(Type):
 
         return l
 
+    def offsetof(self, path: Sequence[U[int, str]], value: O[str], context: Context) -> O[int]:
+        return 0
+
     def default(self, context: Context) -> str:
         return ''
 
@@ -2055,6 +2238,12 @@ def _sizeof(spec: Any, value: O[Any], context: Context) -> Mapping[str, O[int]]:
     type = to_type(spec)
     return to_size(type.sizeof(value, context), context)
 
+def _offsetof(spec: Any, path: Sequence[U[int, str]], value: O[Any], context: Context) -> Mapping[str, O[int]]:
+    if not path:
+        return to_size(0, context)
+    type = to_type(spec)
+    return to_size(type.offsetof(path, value, context), context)
+
 def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, params: O[Params] = None, stream: O[Str] = None) -> O[int]:
     type = to_type(spec)
     ctx = context or Context(type, value, params=params)
@@ -2072,6 +2261,21 @@ def sizeof(spec: Any, value: O[Any] = None, context: O[Context] = None, params: 
                 return None
             n += v
         return n
+
+def offsetof(spec: Any, path: Sequence[U[int, str]], value: O[Any] = None, context: O[Context] = None, params: O[Params] = None, stream: O[Str] = None) -> O[int]:
+    type = to_type(spec)
+    ctx = context or Context(type, value, params=params)
+    try:
+        offsets = _offsetof(type, path, value, ctx)
+    except Exception as e:
+        raise Error(ctx, e)
+
+    if not stream:
+        stream = ctx.params.default_stream
+    else:
+        stream = ctx.params.streams[stream]
+
+    return ctx.stream_offset(stream) + offsets.get(stream.name, 0)
 
 def default(spec: Any, context: O[Context] = None, params: O[Params] = None) -> O[Any]:
     type = to_type(spec)
@@ -2101,5 +2305,5 @@ __all__ = [c.__name__ for c in __all_types__ | {
     # Bases
     IO, Context, Params, Error, Type,
     # Functions
-    parse, emit, sizeof, default,
+    parse, emit, sizeof, offsetof, default,
 }]
