@@ -1239,7 +1239,7 @@ class Generic(Type):
 
 class GenericSelf(Generic):
     def __repr__(self) -> str:
-        return '<recursion: {}>'.format(friendly_name(self.stack[-1]))
+        return '<recursion{}>'.format((': ' + friendly_name(self.stack[-1])) if self.stack else '')
 
 class MetaSpec(collections.OrderedDict):
     def __getattr__(self, item: Any) -> Any:
